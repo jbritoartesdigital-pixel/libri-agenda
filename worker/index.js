@@ -47,7 +47,7 @@ function overlaps(startA, endA, startB, endB) {
 
 const SESSION_COOKIE = 'libri_session'
 const SESSION_MAX_AGE = 60 * 60 * 24 * 30
-const PBKDF2_ITERATIONS = 210000
+const PBKDF2_ITERATIONS = 100000
 
 function bytesToBase64(bytes) {
   let binary = ''
