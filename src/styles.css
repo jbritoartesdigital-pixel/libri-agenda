@@ -289,3 +289,124 @@ button { border: 0; }
   .filter-row .align-end { grid-column: 1; }
   .professional-grid { grid-template-columns: 1fr; }
 }
+
+/* =========================================================
+   LOGIN INTERNO
+   ========================================================= */
+.login-page {
+  min-height: 100vh;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background:
+    radial-gradient(circle at top left, color-mix(in srgb, var(--brand-secondary) 52%, white) 0, transparent 42%),
+    #f5f7f6;
+}
+
+.login-card {
+  width: min(100%, 420px);
+  background: #fff;
+  border: 1px solid #e7ebe9;
+  border-radius: 26px;
+  padding: 34px;
+  box-shadow: 0 24px 70px rgba(27, 40, 34, .10);
+}
+
+.login-logo {
+  width: 52px;
+  height: 52px;
+  display: grid;
+  place-items: center;
+  border-radius: 16px;
+  margin-bottom: 22px;
+  background: var(--brand-primary, #6f8278);
+  color: white;
+  font-size: 24px;
+  font-weight: 800;
+}
+
+.login-card h1 {
+  margin: 7px 0 8px;
+  font-size: clamp(26px, 5vw, 34px);
+}
+
+.login-card > p {
+  margin: 0 0 26px;
+  color: #68736d;
+}
+
+.login-card form {
+  display: grid;
+  gap: 16px;
+}
+
+.login-submit {
+  width: 100%;
+  justify-content: center;
+  min-height: 46px;
+  margin-top: 4px;
+}
+
+.login-submit:disabled {
+  opacity: .65;
+  cursor: wait;
+}
+
+.login-error {
+  padding: 11px 13px;
+  border-radius: 12px;
+  background: #fff1f1;
+  color: #9b2c2c;
+  font-size: 13px;
+}
+
+.login-help {
+  display: block;
+  margin-top: 20px;
+  text-align: center;
+  color: #87918c;
+}
+
+.slug-input {
+  display: flex;
+  align-items: center;
+  overflow: hidden;
+  border: 1px solid #dfe5e2;
+  border-radius: 12px;
+  background: #fff;
+}
+
+.slug-input > span {
+  padding-left: 12px;
+  color: #7a8580;
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.slug-input input {
+  border: 0 !important;
+  box-shadow: none !important;
+  min-width: 0;
+}
+
+.access-preview {
+  padding: 12px 14px;
+  border-radius: 12px;
+  background: #f6f8f7;
+  color: #53605a;
+  font-size: 13px;
+  overflow-wrap: anywhere;
+}
+
+.professional-switcher label > strong {
+  display: block;
+  margin-top: 2px;
+  color: #24302a;
+}
+
+@media (max-width: 640px) {
+  .login-page { padding: 14px; }
+  .login-card { padding: 26px 20px; border-radius: 22px; }
+  .slug-input { display: block; }
+  .slug-input > span { display: block; padding: 10px 12px 0; }
+}
