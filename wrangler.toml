@@ -8,8 +8,7 @@ binding = "ASSETS"
 not_found_handling = "single-page-application"
 run_worker_first = ["/api/*"]
 
-# Depois de criar o banco D1 no Cloudflare, descomente e preencha:
-# [[d1_databases]]
-# binding = "DB"
-# database_name = "libri-agenda"
-# database_id = "COLE_AQUI_O_DATABASE_ID"
+[[d1_databases]]
+binding = "DB"
+database_name = "libri-agenda"
+database_id = "b897896e-bc07-458c-bf49-ff51f46cf19c"
