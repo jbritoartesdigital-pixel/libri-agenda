@@ -309,17 +309,61 @@ export default {
         const password = String(data.password || '')
         if (password.length < 8) return error('A senha precisa ter pelo menos 8 caracteres.')
 
-        const userResult = await env.DB.prepare(`
+        // Gera o hash antes de tocar no banco, evitando deixar usuário órfão
+        // caso a derivação da senha falhe.
+        const encrypted = await passwordHash(password)
+
+        // Setup idempotente: se uma tentativa anterior já criou o usuário,
+        // reaproveita o mesmo registro em vez de falhar no UNIQUE(email).
+        await env.DB.prepare(`
           INSERT INTO users (name, email, role, professional_id, active)
           VALUES (?, ?, 'admin', NULL, 1)
+          ON CONFLICT(email) DO UPDATE SET
+            name = excluded.name,
+            role = 'admin',
+            professional_id = NULL,
+            active = 1
         `).bind(name, 'admin@libri.local').run()
-        const userId = userResult.meta?.last_row_id
-        const encrypted = await passwordHash(password)
-        const accountResult = await env.DB.prepare(`
-          INSERT INTO auth_accounts (user_id, role, professional_id, slug, password_hash, password_salt, active)
+
+        const user = await env.DB.prepare(`
+          SELECT id
+          FROM users
+          WHERE email = ?
+          LIMIT 1
+        `).bind('admin@libri.local').first()
+
+        if (!user?.id) return error('Não foi possível preparar a conta administradora.', 500)
+
+        // Também reaproveita um auth_accounts incompleto/inativo, se existir.
+        await env.DB.prepare(`
+          INSERT INTO auth_accounts (
+            user_id,
+            role,
+            professional_id,
+            slug,
+            password_hash,
+            password_salt,
+            active
+          )
           VALUES (?, 'admin', NULL, 'admin', ?, ?, 1)
-        `).bind(userId, encrypted.hash, encrypted.salt).run()
-        const account = { id: accountResult.meta?.last_row_id }
+          ON CONFLICT(slug) DO UPDATE SET
+            user_id = excluded.user_id,
+            role = 'admin',
+            professional_id = NULL,
+            password_hash = excluded.password_hash,
+            password_salt = excluded.password_salt,
+            active = 1,
+            updated_at = CURRENT_TIMESTAMP
+        `).bind(user.id, encrypted.hash, encrypted.salt).run()
+
+        const account = await env.DB.prepare(`
+          SELECT id
+          FROM auth_accounts
+          WHERE slug = 'admin'
+          LIMIT 1
+        `).first()
+
+        if (!account?.id) return error('Não foi possível criar o acesso da administradora.', 500)
         const token = await createSession(env, account)
         return authJson({ authenticated: true, role: 'admin', slug: 'admin', name }, token, { status: 201 })
       }
