@@ -52,6 +52,8 @@ function sortAppointments(items) {
 
 export default function App() {
   const [session, setSession] = useState(null)
+  const [setupRequired, setSetupRequired] = useState(false)
+  const [authBusy, setAuthBusy] = useState(false)
   const [professionals, setProfessionals] = useState([])
   const [professionalId, setProfessionalId] = useState(null)
   const [activeNav, setActiveNav] = useState('Profissionais')
@@ -102,16 +104,55 @@ export default function App() {
   async function bootstrap() {
     setLoading(true); setError('')
     try {
-      const [sessionData, professionalData] = await Promise.all([api.get('/api/session'), api.get('/api/professionals')])
+      if (window.location.pathname === '/') window.history.replaceState({}, '', '/admin')
+      const sessionData = await api.get('/api/auth/session')
+      setSetupRequired(Boolean(sessionData?.setup_required))
+      if (!sessionData?.authenticated) {
+        setSession(null)
+        setProfessionals([])
+        setProfessionalId(null)
+        return
+      }
       setSession(sessionData)
+      if (sessionData.role === 'professional' && sessionData.slug && window.location.pathname !== `/${sessionData.slug}`) {
+        window.history.replaceState({}, '', `/${sessionData.slug}`)
+      }
+      const professionalData = await api.get('/api/professionals')
       setProfessionals(professionalData)
       if (professionalData.length) {
         setProfessionalId(professionalData[0].id)
-        if (sessionData?.role === 'professional') setActiveNav('Início')
+        setActiveNav(sessionData.role === 'professional' ? 'Início' : 'Profissionais')
       }
     } catch (e) {
+      setSession(null)
       setError(e.message)
     } finally { setLoading(false) }
+  }
+
+  async function login(password) {
+    setAuthBusy(true); setError('')
+    try {
+      const slug = window.location.pathname.split('/').filter(Boolean)[0] || 'admin'
+      await api.post('/api/auth/login', { slug, password })
+      await bootstrap()
+    } catch (e) { setError(e.message) } finally { setAuthBusy(false) }
+  }
+
+  async function setupAdmin(name, password) {
+    setAuthBusy(true); setError('')
+    try {
+      await api.post('/api/auth/setup', { name, password })
+      await bootstrap()
+    } catch (e) { setError(e.message) } finally { setAuthBusy(false) }
+  }
+
+  async function logout() {
+    try { await api.post('/api/auth/logout', {}) } catch {}
+    setSession(null)
+    setProfessionals([])
+    setProfessionalId(null)
+    setPatients([]); setAppointments([]); setBlocks([]); setMessages([]); setRules([]); setAudit([])
+    setActiveNav('Profissionais')
   }
 
   async function loadProfessionals() {
@@ -141,10 +182,22 @@ export default function App() {
 
   async function saveProfessional(data) {
     try {
-      if (professionalModal?.id) await api.patch(`/api/professionals/${professionalModal.id}`, data)
-      else await api.post('/api/professionals', data)
+      const { access_slug, new_password, ...profileData } = data
+      let targetId = professionalModal?.id || null
+      if (targetId) {
+        await api.patch(`/api/professionals/${targetId}`, profileData)
+      } else {
+        const created = await api.post('/api/professionals', profileData)
+        targetId = created.id
+      }
+
+      const slugChanged = Boolean(professionalModal?.access_slug) && access_slug !== professionalModal.access_slug
+      if (new_password || slugChanged) {
+        await api.put(`/api/professionals/${targetId}/access`, { slug: access_slug, password: new_password })
+      }
+
       const list = await loadProfessionals()
-      if (!professionalModal?.id && list.length) setProfessionalId(list[list.length - 1].id)
+      if (!professionalModal?.id && targetId) setProfessionalId(targetId)
       setProfessionalModal(null); notify('Profissional salvo.')
     } catch (e) { setError(e.message) }
   }
@@ -315,6 +368,11 @@ export default function App() {
 
   if (loading) return <div className="loading-screen"><div className="brand-mark">L</div><span>Carregando Libri Agenda...</span></div>
 
+  if (!session?.authenticated) {
+    const slug = window.location.pathname.split('/').filter(Boolean)[0] || 'admin'
+    return <LoginScreen slug={slug} setupRequired={setupRequired} busy={authBusy} error={error} onLogin={login} onSetup={setupAdmin} />
+  }
+
   return (
     <div className="app-shell">
       <aside className="sidebar">
@@ -324,7 +382,7 @@ export default function App() {
             <button key={name} className={activeNav === name ? 'nav-item active' : 'nav-item'} onClick={() => setActiveNav(name)}><Icon size={17} />{name}</button>
           ))}
         </nav>
-        <div className="sidebar-foot"><span>V1 funcional</span><small>{session?.authenticated ? session.email : 'Modo de configuração'}</small></div>
+        <div className="sidebar-foot"><span>{session?.name || 'Libri Agenda'}</span><small>{session?.role === 'admin' ? 'Administradora' : 'Profissional'}</small></div>
       </aside>
 
       <main className="content">
@@ -333,12 +391,17 @@ export default function App() {
           {professional && (
             <div className="professional-switcher">
               {professional.photo_url ? <img src={professional.photo_url} alt="" /> : <div className="avatar">{initials(professional.name)}</div>}
-              <label><span>Profissional atual</span><select value={professionalId || ''} onChange={(e) => { setProfessionalId(Number(e.target.value)); setActiveNav('Início') }}>{professionals.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}</select></label>
+              {session?.role === 'admin' ? (
+                <label><span>Profissional atual</span><select value={professionalId || ''} onChange={(e) => { setProfessionalId(Number(e.target.value)); setActiveNav('Início') }}>{professionals.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}</select></label>
+              ) : (
+                <label><span>{professional.specialty || 'Profissional'}</span><strong>{professional.name}</strong></label>
+              )}
             </div>
           )}
           <div className="top-actions">
             {professional && <button className="icon-button" title="Buscar" onClick={() => setActiveNav('Pacientes')}><Search size={18} /></button>}
             {professional && <button className="primary-button" onClick={() => setAppointmentModal({ initial: { appointment_date: todayISO() } })}><Plus size={18} /> Novo agendamento</button>}
+            <button className="ghost-button" onClick={logout}>Sair</button>
           </div>
         </header>
 
@@ -380,6 +443,44 @@ export default function App() {
       {toast && <div className="toast">{toast}</div>}
     </div>
   )
+}
+
+function LoginScreen({ slug, setupRequired, busy, error, onLogin, onSetup }) {
+  const isAdmin = slug === 'admin'
+  const needsSetup = isAdmin && setupRequired
+  const [name, setName] = useState('Julianna')
+  const [password, setPassword] = useState('')
+  const [confirm, setConfirm] = useState('')
+  const [localError, setLocalError] = useState('')
+
+  function submit(e) {
+    e.preventDefault()
+    setLocalError('')
+    if (needsSetup) {
+      if (password.length < 8) return setLocalError('Use uma senha com pelo menos 8 caracteres.')
+      if (password !== confirm) return setLocalError('As senhas não conferem.')
+      onSetup(name, password)
+      return
+    }
+    onLogin(password)
+  }
+
+  return <div className="login-page">
+    <div className="login-card">
+      <div className="login-logo">L</div>
+      <span className="eyebrow">Libri Agenda</span>
+      <h1>{needsSetup ? 'Criar acesso da administradora' : isAdmin ? 'Área da administradora' : 'Acesso profissional'}</h1>
+      <p>{needsSetup ? 'Defina sua senha uma única vez.' : 'Digite sua senha para abrir a agenda.'}</p>
+      <form onSubmit={submit}>
+        {needsSetup && <label className="field"><span>Seu nome</span><input value={name} onChange={(e)=>setName(e.target.value)} required /></label>}
+        <label className="field"><span>Senha</span><input type="password" autoComplete="current-password" value={password} onChange={(e)=>setPassword(e.target.value)} minLength="8" required autoFocus /></label>
+        {needsSetup && <label className="field"><span>Confirmar senha</span><input type="password" value={confirm} onChange={(e)=>setConfirm(e.target.value)} minLength="8" required /></label>}
+        {(localError || error) && <div className="login-error">{localError || error}</div>}
+        <button className="primary-button login-submit" disabled={busy}>{busy ? 'Entrando...' : needsSetup ? 'Criar acesso' : 'Entrar'}</button>
+      </form>
+      {!isAdmin && <small className="login-help">Este link abre somente o ambiente deste profissional.</small>}
+    </div>
+  </div>
 }
 
 function ProfessionalsScreen({ professionals, onOpen, onEdit, onAdd }) {
@@ -462,7 +563,7 @@ function SettingsScreen({ professional, rules, blocks, audit, onEdit, onSaveRule
   const initialWeekly = useMemo(()=>weekdays.map(([weekday,label])=>{const rule=rules.find((r)=>Number(r.weekday)===weekday);return {weekday,label,enabled:Boolean(rule),start_time:rule?.start_time||'09:00',end_time:rule?.end_time||'18:00',modality:rule?.modality||'both'}}),[rules])
   const [weekly,setWeekly]=useState(initialWeekly)
   useEffect(()=>setWeekly(initialWeekly),[initialWeekly])
-  return <><section className="page-head compact"><div><span className="eyebrow">Configurações</span><h1>{professional.name}</h1><p>Rotina, identidade, bloqueios e histórico.</p></div><button className="primary-button" onClick={onEdit}><Palette size={17}/> Identidade e valores</button></section><div className="tabs"><button className={tab==='agenda'?'active':''} onClick={()=>setTab('agenda')}>Agenda</button><button className={tab==='bloqueios'?'active':''} onClick={()=>setTab('bloqueios')}>Bloqueios</button><button className={tab==='historico'?'active':''} onClick={()=>setTab('historico')}>Histórico</button><button className={tab==='acesso'?'active':''} onClick={()=>setTab('acesso')}>Acesso</button></div>{tab==='agenda'&&<div className="panel"><div className="panel-head"><div><h2>Rotina semanal</h2><p className="muted">Use apenas os períodos em que consultas particulares podem ser marcadas.</p></div></div><div className="weekly-settings">{weekly.map((row,i)=><div className="weekly-row" key={row.weekday}><label className="check-field"><input type="checkbox" checked={row.enabled} onChange={(e)=>{const n=[...weekly];n[i]={...row,enabled:e.target.checked};setWeekly(n)}}/><strong>{row.label}</strong></label><input type="time" value={row.start_time} disabled={!row.enabled} onChange={(e)=>{const n=[...weekly];n[i]={...row,start_time:e.target.value};setWeekly(n)}}/><span>até</span><input type="time" value={row.end_time} disabled={!row.enabled} onChange={(e)=>{const n=[...weekly];n[i]={...row,end_time:e.target.value};setWeekly(n)}}/><select value={row.modality} disabled={!row.enabled} onChange={(e)=>{const n=[...weekly];n[i]={...row,modality:e.target.value};setWeekly(n)}}><option value="both">Online + presencial</option><option value="online">Somente online</option><option value="in_person">Somente presencial</option></select></div>)}</div><div className="panel-actions"><button className="primary-button" onClick={()=>onSaveRules(weekly.filter((r)=>r.enabled).map(({weekday,start_time,end_time,modality})=>({weekday,start_time,end_time,modality})))}>Salvar rotina</button></div></div>}{tab==='bloqueios'&&<div className="panel"><div className="panel-head"><div><h2>Bloqueios</h2><p className="muted">Ambulatório, pós, folga e compromissos.</p></div><button className="primary-button" onClick={onBlock}><Plus size={16}/> Novo bloqueio</button></div><div className="block-list">{blocks.map((b)=><div className="block-item" key={b.id}><Ban size={17}/><div><strong>{b.title}</strong><small>{Number(b.recurring)===1?`Recorrente · ${weekdays.find(([d])=>d===Number(b.recurrence_weekday))?.[1]||''}`:`${formatDate(b.block_date)}${Number(b.all_day)===1?' · dia inteiro':` · ${b.start_time}–${b.end_time}`}`}</small></div><button className="danger-soft" onClick={()=>onDeleteBlock(b.id)}>Remover</button></div>)}{!blocks.length&&<div className="empty-state">Nenhum bloqueio cadastrado.</div>}</div></div>}{tab==='historico'&&<div className="panel"><div className="panel-head"><div><h2>Histórico de alterações</h2></div></div><div className="audit-list">{audit.map((a)=><div className="audit-item" key={a.id}><History size={16}/><div><strong>{a.description||a.action}</strong><small>{a.user_name||'Sistema'} · {new Date(a.created_at+'Z').toLocaleString('pt-BR')}</small></div></div>)}{!audit.length&&<div className="empty-state">Ainda não há alterações registradas.</div>}</div></div>}{tab==='acesso'&&<div className="panel access-panel"><LockKeyhole size={28}/><div><h2>Acesso protegido</h2><p>O código já está preparado para Cloudflare Access com e-mails individuais. Enquanto <code>REQUIRE_ACCESS</code> estiver como <code>false</code>, não cadastre pacientes reais. A ativação é uma configuração única de segurança, não exige mudar as telas.</p></div></div>}</>
+  return <><section className="page-head compact"><div><span className="eyebrow">Configurações</span><h1>{professional.name}</h1><p>Rotina, identidade, bloqueios e histórico.</p></div><button className="primary-button" onClick={onEdit}><Palette size={17}/> Identidade e valores</button></section><div className="tabs"><button className={tab==='agenda'?'active':''} onClick={()=>setTab('agenda')}>Agenda</button><button className={tab==='bloqueios'?'active':''} onClick={()=>setTab('bloqueios')}>Bloqueios</button><button className={tab==='historico'?'active':''} onClick={()=>setTab('historico')}>Histórico</button><button className={tab==='acesso'?'active':''} onClick={()=>setTab('acesso')}>Acesso</button></div>{tab==='agenda'&&<div className="panel"><div className="panel-head"><div><h2>Rotina semanal</h2><p className="muted">Use apenas os períodos em que consultas particulares podem ser marcadas.</p></div></div><div className="weekly-settings">{weekly.map((row,i)=><div className="weekly-row" key={row.weekday}><label className="check-field"><input type="checkbox" checked={row.enabled} onChange={(e)=>{const n=[...weekly];n[i]={...row,enabled:e.target.checked};setWeekly(n)}}/><strong>{row.label}</strong></label><input type="time" value={row.start_time} disabled={!row.enabled} onChange={(e)=>{const n=[...weekly];n[i]={...row,start_time:e.target.value};setWeekly(n)}}/><span>até</span><input type="time" value={row.end_time} disabled={!row.enabled} onChange={(e)=>{const n=[...weekly];n[i]={...row,end_time:e.target.value};setWeekly(n)}}/><select value={row.modality} disabled={!row.enabled} onChange={(e)=>{const n=[...weekly];n[i]={...row,modality:e.target.value};setWeekly(n)}}><option value="both">Online + presencial</option><option value="online">Somente online</option><option value="in_person">Somente presencial</option></select></div>)}</div><div className="panel-actions"><button className="primary-button" onClick={()=>onSaveRules(weekly.filter((r)=>r.enabled).map(({weekday,start_time,end_time,modality})=>({weekday,start_time,end_time,modality})))}>Salvar rotina</button></div></div>}{tab==='bloqueios'&&<div className="panel"><div className="panel-head"><div><h2>Bloqueios</h2><p className="muted">Ambulatório, pós, folga e compromissos.</p></div><button className="primary-button" onClick={onBlock}><Plus size={16}/> Novo bloqueio</button></div><div className="block-list">{blocks.map((b)=><div className="block-item" key={b.id}><Ban size={17}/><div><strong>{b.title}</strong><small>{Number(b.recurring)===1?`Recorrente · ${weekdays.find(([d])=>d===Number(b.recurrence_weekday))?.[1]||''}`:`${formatDate(b.block_date)}${Number(b.all_day)===1?' · dia inteiro':` · ${b.start_time}–${b.end_time}`}`}</small></div><button className="danger-soft" onClick={()=>onDeleteBlock(b.id)}>Remover</button></div>)}{!blocks.length&&<div className="empty-state">Nenhum bloqueio cadastrado.</div>}</div></div>}{tab==='historico'&&<div className="panel"><div className="panel-head"><div><h2>Histórico de alterações</h2></div></div><div className="audit-list">{audit.map((a)=><div className="audit-item" key={a.id}><History size={16}/><div><strong>{a.description||a.action}</strong><small>{a.user_name||'Sistema'} · {new Date(a.created_at+'Z').toLocaleString('pt-BR')}</small></div></div>)}{!audit.length&&<div className="empty-state">Ainda não há alterações registradas.</div>}</div></div>}{tab==='acesso'&&<div className="panel access-panel"><LockKeyhole size={28}/><div><h2>Acesso da profissional</h2><p>{professional.access_slug ? <>Link direto: <code>{window.location.origin}/{professional.access_slug}</code>. A senha pode ser alterada em <strong>Identidade e valores</strong>.</> : <>Ainda não há login próprio configurado. Abra <strong>Identidade e valores</strong>, escolha o link e defina uma senha.</>}</p></div></div>}</>
 }
 
 function InvoiceModal({ appointment, onClose, onSave }) {
