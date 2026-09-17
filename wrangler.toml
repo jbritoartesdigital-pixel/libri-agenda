@@ -1,0 +1,15 @@
+name = "libri-agenda-api"
+main = "worker/index.js"
+compatibility_date = "2026-09-17"
+
+[assets]
+directory = "./dist"
+binding = "ASSETS"
+not_found_handling = "single-page-application"
+run_worker_first = ["/api/*"]
+
+# Depois de criar o banco D1 no Cloudflare, descomente e preencha:
+# [[d1_databases]]
+# binding = "DB"
+# database_name = "libri-agenda"
+# database_id = "COLE_AQUI_O_DATABASE_ID"
