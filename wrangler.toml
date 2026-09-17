@@ -17,3 +17,7 @@ REQUIRE_ACCESS = "false"
 binding = "DB"
 database_name = "libri-agenda"
 database_id = "b897896e-bc07-458c-bf49-ff51f46cf19c"
+
+[[r2_buckets]]
+binding = "FILES"
+bucket_name = "libri-agenda-files"
