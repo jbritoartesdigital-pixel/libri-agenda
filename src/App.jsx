@@ -439,7 +439,7 @@ export default function App() {
       {professionalModal && <ProfessionalModal professional={professionalModal.id ? professionalModal : null} onClose={() => setProfessionalModal(null)} onSave={saveProfessional} />}
       {blockModal && <BlockModal initialDate={blockModal.date} onClose={() => setBlockModal(null)} onSave={saveBlock} />}
       {availability && <AvailabilityModal professionalId={professionalId} api={api} initial={availability.initial} mode={availability.mode} maxSelect={3} onClose={() => setAvailability(null)} onPick={pickSlot} onUseSelected={useSelectedSlots} />}
-      {invoiceModal && <InvoiceModal appointment={invoiceModal} onClose={() => setInvoiceModal(null)} onSave={async (payload) => { await api.put(`/api/appointments/${invoiceModal.id}/invoice`, payload); await loadWorkspace(professionalId); setInvoiceModal(null); notify('Nota fiscal atualizada.') }} />}
+      {invoiceModal && <InvoiceModal appointment={invoiceModal} onClose={() => setInvoiceModal(null)} onDone={async () => { await loadWorkspace(professionalId); setInvoiceModal(null); notify('Nota fiscal atualizada.') }} />}
       {toast && <div className="toast">{toast}</div>}
     </div>
   )
@@ -566,9 +566,87 @@ function SettingsScreen({ professional, rules, blocks, audit, onEdit, onSaveRule
   return <><section className="page-head compact"><div><span className="eyebrow">Configurações</span><h1>{professional.name}</h1><p>Rotina, identidade, bloqueios e histórico.</p></div><button className="primary-button" onClick={onEdit}><Palette size={17}/> Identidade e valores</button></section><div className="tabs"><button className={tab==='agenda'?'active':''} onClick={()=>setTab('agenda')}>Agenda</button><button className={tab==='bloqueios'?'active':''} onClick={()=>setTab('bloqueios')}>Bloqueios</button><button className={tab==='historico'?'active':''} onClick={()=>setTab('historico')}>Histórico</button><button className={tab==='acesso'?'active':''} onClick={()=>setTab('acesso')}>Acesso</button></div>{tab==='agenda'&&<div className="panel"><div className="panel-head"><div><h2>Rotina semanal</h2><p className="muted">Use apenas os períodos em que consultas particulares podem ser marcadas.</p></div></div><div className="weekly-settings">{weekly.map((row,i)=><div className="weekly-row" key={row.weekday}><label className="check-field"><input type="checkbox" checked={row.enabled} onChange={(e)=>{const n=[...weekly];n[i]={...row,enabled:e.target.checked};setWeekly(n)}}/><strong>{row.label}</strong></label><input type="time" value={row.start_time} disabled={!row.enabled} onChange={(e)=>{const n=[...weekly];n[i]={...row,start_time:e.target.value};setWeekly(n)}}/><span>até</span><input type="time" value={row.end_time} disabled={!row.enabled} onChange={(e)=>{const n=[...weekly];n[i]={...row,end_time:e.target.value};setWeekly(n)}}/><select value={row.modality} disabled={!row.enabled} onChange={(e)=>{const n=[...weekly];n[i]={...row,modality:e.target.value};setWeekly(n)}}><option value="both">Online + presencial</option><option value="online">Somente online</option><option value="in_person">Somente presencial</option></select></div>)}</div><div className="panel-actions"><button className="primary-button" onClick={()=>onSaveRules(weekly.filter((r)=>r.enabled).map(({weekday,start_time,end_time,modality})=>({weekday,start_time,end_time,modality})))}>Salvar rotina</button></div></div>}{tab==='bloqueios'&&<div className="panel"><div className="panel-head"><div><h2>Bloqueios</h2><p className="muted">Ambulatório, pós, folga e compromissos.</p></div><button className="primary-button" onClick={onBlock}><Plus size={16}/> Novo bloqueio</button></div><div className="block-list">{blocks.map((b)=><div className="block-item" key={b.id}><Ban size={17}/><div><strong>{b.title}</strong><small>{Number(b.recurring)===1?`Recorrente · ${weekdays.find(([d])=>d===Number(b.recurrence_weekday))?.[1]||''}`:`${formatDate(b.block_date)}${Number(b.all_day)===1?' · dia inteiro':` · ${b.start_time}–${b.end_time}`}`}</small></div><button className="danger-soft" onClick={()=>onDeleteBlock(b.id)}>Remover</button></div>)}{!blocks.length&&<div className="empty-state">Nenhum bloqueio cadastrado.</div>}</div></div>}{tab==='historico'&&<div className="panel"><div className="panel-head"><div><h2>Histórico de alterações</h2></div></div><div className="audit-list">{audit.map((a)=><div className="audit-item" key={a.id}><History size={16}/><div><strong>{a.description||a.action}</strong><small>{a.user_name||'Sistema'} · {new Date(a.created_at+'Z').toLocaleString('pt-BR')}</small></div></div>)}{!audit.length&&<div className="empty-state">Ainda não há alterações registradas.</div>}</div></div>}{tab==='acesso'&&<div className="panel access-panel"><LockKeyhole size={28}/><div><h2>Acesso da profissional</h2><p>{professional.access_slug ? <>Link direto: <code>{window.location.origin}/{professional.access_slug}</code>. A senha pode ser alterada em <strong>Identidade e valores</strong>.</> : <>Ainda não há login próprio configurado. Abra <strong>Identidade e valores</strong>, escolha o link e defina uma senha.</>}</p></div></div>}</>
 }
 
-function InvoiceModal({ appointment, onClose, onSave }) {
-  const [form,setForm]=useState({invoice_number:'',issued_at:todayISO(),file_name:'',file_url:'',mark_issued:true})
-  return <Modal title={`Nota fiscal · ${appointment.patient_name}`} subtitle="Nesta V1, o registro da NF funciona. O upload do PDF será ativado com armazenamento privado R2." onClose={onClose}><form className="form-grid" onSubmit={(e)=>{e.preventDefault();onSave(form)}}><label className="field span-2"><span>Número da nota</span><input value={form.invoice_number} onChange={(e)=>setForm({...form,invoice_number:e.target.value})}/></label><label className="field span-2"><span>Data de emissão</span><input type="date" value={form.issued_at} onChange={(e)=>setForm({...form,issued_at:e.target.value})}/></label><label className="field span-2"><span>Link do PDF (opcional por enquanto)</span><input value={form.file_url} onChange={(e)=>setForm({...form,file_url:e.target.value})} placeholder="Será substituído por upload privado com R2"/></label><label className="check-field span-2"><input type="checkbox" checked={form.mark_issued} onChange={(e)=>setForm({...form,mark_issued:e.target.checked})}/><span>Marcar NF como emitida</span></label><div className="modal-actions span-2"><button type="button" className="ghost-button" onClick={onClose}>Cancelar</button><button className="primary-button">Salvar NF</button></div></form></Modal>
+function InvoiceModal({ appointment, onClose, onDone }) {
+  const [form, setForm] = useState({ invoice_number: '', issued_at: todayISO(), mark_issued: true })
+  const [invoice, setInvoice] = useState(null)
+  const [file, setFile] = useState(null)
+  const [busy, setBusy] = useState(true)
+  const [localError, setLocalError] = useState('')
+
+  useEffect(() => {
+    let cancelled = false
+    setBusy(true)
+    api.get(`/api/appointments/${appointment.id}/invoice`)
+      .then((data) => {
+        if (cancelled) return
+        setInvoice(data)
+        setForm({
+          invoice_number: data?.invoice_number || '',
+          issued_at: data?.issued_at || todayISO(),
+          mark_issued: appointment.invoice_status === 'issued' || Boolean(data?.issued_at),
+        })
+      })
+      .catch((e) => !cancelled && setLocalError(e.message))
+      .finally(() => !cancelled && setBusy(false))
+    return () => { cancelled = true }
+  }, [appointment.id])
+
+  async function save(e) {
+    e.preventDefault()
+    setBusy(true); setLocalError('')
+    try {
+      await api.put(`/api/appointments/${appointment.id}/invoice`, form)
+      if (file) await api.upload(`/api/appointments/${appointment.id}/invoice-file`, file)
+      await onDone()
+    } catch (e) {
+      setLocalError(e.message)
+      setBusy(false)
+    }
+  }
+
+  function openPdf(download = false) {
+    const suffix = download ? '?download=1' : ''
+    window.open(`/api/appointments/${appointment.id}/invoice-file${suffix}`, '_blank', 'noopener,noreferrer')
+  }
+
+  async function sharePdf() {
+    setLocalError('')
+    try {
+      const blob = await api.blob(`/api/appointments/${appointment.id}/invoice-file`)
+      const name = invoice?.file_name || `nota-fiscal-${appointment.patient_name || appointment.id}.pdf`
+      const shareFile = new File([blob], name, { type: 'application/pdf' })
+      if (navigator.share && (!navigator.canShare || navigator.canShare({ files: [shareFile] }))) {
+        await navigator.share({ files: [shareFile], title: 'Nota fiscal' })
+        return
+      }
+      openPdf(true)
+    } catch (e) {
+      if (e?.name !== 'AbortError') setLocalError(e.message || 'Não foi possível compartilhar o PDF.')
+    }
+  }
+
+  async function removePdf() {
+    if (!window.confirm('Remover o PDF anexado desta nota fiscal?')) return
+    setBusy(true); setLocalError('')
+    try {
+      await api.delete(`/api/appointments/${appointment.id}/invoice-file`)
+      setInvoice((prev) => ({ ...(prev || {}), file_name: '', file_url: '' }))
+      setFile(null)
+    } catch (e) { setLocalError(e.message) }
+    finally { setBusy(false) }
+  }
+
+  return <Modal title={`Nota fiscal · ${appointment.patient_name}`} subtitle="O PDF fica privado e vinculado somente a esta consulta." onClose={onClose}>
+    <form className="form-grid" onSubmit={save}>
+      {localError && <div className="inline-error span-2">{localError}</div>}
+      <label className="field span-2"><span>Número da nota</span><input value={form.invoice_number} onChange={(e)=>setForm({...form,invoice_number:e.target.value})}/></label>
+      <label className="field span-2"><span>Data de emissão</span><input type="date" value={form.issued_at} onChange={(e)=>setForm({...form,issued_at:e.target.value})}/></label>
+      <label className="field span-2"><span>PDF da nota fiscal</span><input type="file" accept="application/pdf,.pdf" onChange={(e)=>setFile(e.target.files?.[0] || null)}/><small>{file ? `Novo arquivo: ${file.name}` : 'PDF de até 10 MB.'}</small></label>
+      {invoice?.file_name && <div className="invoice-file span-2"><div><FileText size={20}/><div><strong>{invoice.file_name}</strong><small>PDF anexado</small></div></div><div className="invoice-file-actions"><button type="button" className="ghost-button small" onClick={()=>openPdf(false)}>Visualizar</button><button type="button" className="ghost-button small" onClick={()=>openPdf(true)}>Baixar</button><button type="button" className="primary-button small" onClick={sharePdf}>Compartilhar</button><button type="button" className="danger-soft" onClick={removePdf}>Remover</button></div></div>}
+      <label className="check-field span-2"><input type="checkbox" checked={form.mark_issued} onChange={(e)=>setForm({...form,mark_issued:e.target.checked})}/><span>Marcar NF como emitida</span></label>
+      <div className="modal-actions span-2"><button type="button" className="ghost-button" onClick={onClose}>Cancelar</button><button className="primary-button" disabled={busy}>{busy?'Salvando...':'Salvar NF'}</button></div>
+    </form>
+  </Modal>
 }
 
 function AppointmentRow({ item, onOpen }) { return <button className="appointment-row" onClick={onOpen}><div className="time-cell"><strong>{item.start_time}</strong><small>{item.end_time}</small></div><div className="appointment-main"><strong>{item.patient_name}</strong><span>{item.appointment_type==='first'?'Primeira consulta':'Retorno'} · {item.modality==='online'?'Online':'Presencial'}</span></div><StatusBadge value={item.status}/><div className="money-cell"><strong>{formatBRL(item.price)}</strong><StatusBadge value={item.payment_status} kind="payment"/></div></button> }
