@@ -650,3 +650,76 @@ button { border: 0; }
     min-height: 72px;
   }
 }
+
+/* Nota fiscal com PDF privado */
+.invoice-file {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  background: var(--surface-soft);
+}
+
+.invoice-file > div:first-child {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+.invoice-file strong,
+.invoice-file small {
+  display: block;
+}
+
+.invoice-file strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 340px;
+}
+
+.invoice-file small {
+  margin-top: 2px;
+  color: var(--muted);
+}
+
+.invoice-file-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 6px;
+}
+
+.inline-error {
+  padding: 10px 12px;
+  border-radius: 12px;
+  background: rgba(170, 54, 54, .09);
+  color: #9a3030;
+  font-size: 13px;
+}
+
+@media (max-width: 820px) {
+  .invoice-file {
+    align-items: stretch;
+    flex-direction: column;
+    padding: 10px;
+  }
+
+  .invoice-file strong {
+    max-width: 240px;
+  }
+
+  .invoice-file-actions {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .invoice-file-actions button {
+    min-height: 36px;
+    justify-content: center;
+  }
+}
