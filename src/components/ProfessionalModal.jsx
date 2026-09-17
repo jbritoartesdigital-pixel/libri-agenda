@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import Modal from './Modal'
 
 const empty = {
@@ -8,11 +8,33 @@ const empty = {
   first_online_price: '', first_in_person_price: '', followup_online_price: '', followup_in_person_price: '',
   first_appointment_duration: 50, followup_appointment_duration: 50, interval_minutes: 0,
   pix_key: '', pix_holder: '', payment_instructions: '', invoice_mode: 'on_request',
+  access_slug: '', new_password: '',
+}
+
+function slugifyName(name = '') {
+  return name
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .replace(/\b(dra|dr|doutora|doutor|psicologa|psicologo)\b/g, '')
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 40)
 }
 
 export default function ProfessionalModal({ professional, onClose, onSave }) {
-  const [form, setForm] = useState(empty)
-  useEffect(() => setForm(professional ? { ...empty, ...professional } : empty), [professional])
+  const initial = useMemo(() => {
+    if (!professional) return empty
+    return {
+      ...empty,
+      ...professional,
+      access_slug: professional.access_slug || slugifyName(professional.name),
+      new_password: '',
+    }
+  }, [professional])
+
+  const [form, setForm] = useState(initial)
+  useEffect(() => setForm(initial), [initial])
   const set = (key, value) => setForm((prev) => ({ ...prev, [key]: value }))
   const numberOrNull = (v) => v === '' || v === null || v === undefined ? null : Number(v)
 
@@ -20,6 +42,8 @@ export default function ProfessionalModal({ professional, onClose, onSave }) {
     e.preventDefault()
     onSave({
       ...form,
+      access_slug: String(form.access_slug || '').trim().toLowerCase(),
+      new_password: String(form.new_password || ''),
       online_enabled: form.online_enabled ? 1 : 0,
       in_person_enabled: form.in_person_enabled ? 1 : 0,
       first_online_price: numberOrNull(form.first_online_price),
@@ -32,6 +56,8 @@ export default function ProfessionalModal({ professional, onClose, onSave }) {
     })
   }
 
+  const accessUrl = form.access_slug ? `${window.location.origin}/${form.access_slug}` : ''
+
   return (
     <Modal title={professional?.id ? 'Configurar profissional' : 'Cadastrar profissional'} subtitle="Cada profissional tem agenda, pacientes, mensagens e identidade próprios." onClose={onClose} wide>
       <form className="form-grid" onSubmit={submit}>
@@ -43,6 +69,14 @@ export default function ProfessionalModal({ professional, onClose, onSave }) {
         <label className="field color-field"><span>Cor principal</span><input type="color" value={form.primary_color || '#6f8278'} onChange={(e) => set('primary_color', e.target.value)} /></label>
         <label className="field color-field"><span>Cor secundária</span><input type="color" value={form.secondary_color || '#d8e0dc'} onChange={(e) => set('secondary_color', e.target.value)} /></label>
         <label className="field color-field"><span>Destaque</span><input type="color" value={form.accent_color || '#b88968'} onChange={(e) => set('accent_color', e.target.value)} /></label>
+
+        <div className="form-section span-2"><h3>Acesso</h3><p>A profissional entra diretamente no próprio ambiente por um link e uma senha.</p></div>
+        <label className="field">
+          <span>Link da profissional</span>
+          <div className="slug-input"><span>{window.location.origin}/</span><input value={form.access_slug || ''} onChange={(e) => set('access_slug', e.target.value.toLowerCase().replace(/[^a-z0-9-]/g, ''))} placeholder="bianca" /></div>
+        </label>
+        <label className="field"><span>{professional?.access_slug ? 'Nova senha (opcional)' : 'Senha de acesso'}</span><input type="password" minLength="8" value={form.new_password || ''} onChange={(e) => set('new_password', e.target.value)} placeholder={professional?.access_slug ? 'Deixe em branco para manter' : 'Mínimo 8 caracteres'} /></label>
+        {accessUrl && <div className="access-preview span-2"><strong>Link:</strong> <code>{accessUrl}</code></div>}
 
         <div className="form-section span-2"><h3>Atendimento</h3></div>
         <label className="check-field"><input type="checkbox" checked={Boolean(Number(form.online_enabled))} onChange={(e) => set('online_enabled', e.target.checked)} /><span>Atendimento online</span></label>
