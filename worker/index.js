@@ -4,6 +4,16 @@ function error(message, status = 400) {
   return json({ error: message }, { status })
 }
 
+function safeFilename(value = 'nota-fiscal.pdf') {
+  const cleaned = String(value)
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-zA-Z0-9._-]+/g, '-')
+    .replace(/-+/g, '-')
+    .replace(/^-|-$/g, '')
+  return cleaned.toLowerCase().endsWith('.pdf') ? cleaned : `${cleaned || 'nota-fiscal'}.pdf`
+}
+
 async function bodyJson(request) {
   try {
     return await request.json()
@@ -797,15 +807,24 @@ export default {
       const invoiceMatch = url.pathname.match(/^\/api\/appointments\/(\d+)\/invoice$/)
       if (invoiceMatch) {
         const appointmentId = Number(invoiceMatch[1])
-        const appointment = await env.DB.prepare('SELECT * FROM appointments WHERE id = ?').bind(appointmentId).first()
+        const appointment = await env.DB.prepare(`
+          SELECT a.*, p.full_name AS patient_name
+          FROM appointments a
+          JOIN patients p ON p.id = a.patient_id
+          WHERE a.id = ?
+          LIMIT 1
+        `).bind(appointmentId).first()
         if (!appointment) return error('Consulta não encontrada.', 404)
         if (!canAccessProfessional(session, appointment.professional_id)) return error('Sem acesso a esta consulta.', 403)
 
         if (request.method === 'GET') {
-          return json(await env.DB.prepare('SELECT * FROM invoices WHERE appointment_id = ?').bind(appointmentId).first() || { appointment_id: appointmentId })
+          const row = await env.DB.prepare('SELECT * FROM invoices WHERE appointment_id = ?').bind(appointmentId).first()
+          return json(row || { appointment_id: appointmentId, file_name: '', file_url: '' })
         }
+
         if (request.method === 'PUT') {
           const data = await bodyJson(request)
+          const current = await env.DB.prepare('SELECT * FROM invoices WHERE appointment_id = ?').bind(appointmentId).first()
           await env.DB.prepare(`
             INSERT INTO invoices (appointment_id, invoice_number, issued_at, file_name, file_url)
             VALUES (?, ?, ?, ?, ?)
@@ -815,8 +834,11 @@ export default {
               file_name = excluded.file_name,
               file_url = excluded.file_url
           `).bind(
-            appointmentId, data.invoice_number || '', data.issued_at || null,
-            data.file_name || '', data.file_url || '',
+            appointmentId,
+            data.invoice_number ?? current?.invoice_number ?? '',
+            data.issued_at ?? current?.issued_at ?? null,
+            current?.file_name || '',
+            current?.file_url || '',
           ).run()
           if (data.mark_issued) {
             await env.DB.prepare("UPDATE appointments SET invoice_status = 'issued', updated_at = CURRENT_TIMESTAMP WHERE id = ?")
@@ -824,6 +846,85 @@ export default {
           }
           await audit(env, session, appointment.professional_id, 'invoice', appointmentId, 'update', 'Nota fiscal atualizada')
           return json(await env.DB.prepare('SELECT * FROM invoices WHERE appointment_id = ?').bind(appointmentId).first())
+        }
+      }
+
+      const invoiceFileMatch = url.pathname.match(/^\/api\/appointments\/(\d+)\/invoice-file$/)
+      if (invoiceFileMatch) {
+        const appointmentId = Number(invoiceFileMatch[1])
+        const appointment = await env.DB.prepare(`
+          SELECT a.*, p.full_name AS patient_name
+          FROM appointments a
+          JOIN patients p ON p.id = a.patient_id
+          WHERE a.id = ?
+          LIMIT 1
+        `).bind(appointmentId).first()
+        if (!appointment) return error('Consulta não encontrada.', 404)
+        if (!canAccessProfessional(session, appointment.professional_id)) return error('Sem acesso a esta consulta.', 403)
+        if (!env.FILES) return error('Armazenamento de PDFs ainda não foi configurado.', 503)
+
+        if (request.method === 'POST') {
+          const form = await request.formData()
+          const file = form.get('file')
+          if (!(file instanceof File)) return error('Selecione um arquivo PDF.')
+          if (file.type !== 'application/pdf' && !String(file.name || '').toLowerCase().endsWith('.pdf')) {
+            return error('A nota fiscal precisa ser um arquivo PDF.')
+          }
+          const maxBytes = 10 * 1024 * 1024
+          if (file.size > maxBytes) return error('O PDF pode ter no máximo 10 MB.')
+
+          const current = await env.DB.prepare('SELECT * FROM invoices WHERE appointment_id = ?').bind(appointmentId).first()
+          if (current?.file_url) {
+            try { await env.FILES.delete(current.file_url) } catch {}
+          }
+
+          const fileName = safeFilename(file.name || `nota-fiscal-${appointmentId}.pdf`)
+          const key = `professional-${appointment.professional_id}/patient-${appointment.patient_id}/appointment-${appointmentId}/${Date.now()}-${fileName}`
+          await env.FILES.put(key, file.stream(), {
+            httpMetadata: { contentType: 'application/pdf' },
+            customMetadata: {
+              professional_id: String(appointment.professional_id),
+              patient_id: String(appointment.patient_id),
+              appointment_id: String(appointmentId),
+            },
+          })
+
+          await env.DB.prepare(`
+            INSERT INTO invoices (appointment_id, invoice_number, issued_at, file_name, file_url)
+            VALUES (?, '', NULL, ?, ?)
+            ON CONFLICT(appointment_id) DO UPDATE SET
+              file_name = excluded.file_name,
+              file_url = excluded.file_url
+          `).bind(appointmentId, file.name || fileName, key).run()
+
+          await audit(env, session, appointment.professional_id, 'invoice_file', appointmentId, 'upload', `PDF da NF anexado para ${appointment.patient_name}`)
+          return json({ ok: true, file_name: file.name || fileName })
+        }
+
+        const invoice = await env.DB.prepare('SELECT * FROM invoices WHERE appointment_id = ?').bind(appointmentId).first()
+        if (!invoice?.file_url) return error('Esta nota fiscal ainda não possui PDF anexado.', 404)
+
+        if (request.method === 'GET') {
+          const object = await env.FILES.get(invoice.file_url)
+          if (!object) return error('PDF não encontrado no armazenamento.', 404)
+          const headers = new Headers()
+          object.writeHttpMetadata(headers)
+          headers.set('Content-Type', 'application/pdf')
+          headers.set('Cache-Control', 'private, no-store')
+          const disposition = url.searchParams.get('download') === '1' ? 'attachment' : 'inline'
+          headers.set('Content-Disposition', `${disposition}; filename="${safeFilename(invoice.file_name || 'nota-fiscal.pdf')}"`)
+          return new Response(object.body, { headers })
+        }
+
+        if (request.method === 'DELETE') {
+          await env.FILES.delete(invoice.file_url)
+          await env.DB.prepare(`
+            UPDATE invoices
+            SET file_name = '', file_url = ''
+            WHERE appointment_id = ?
+          `).bind(appointmentId).run()
+          await audit(env, session, appointment.professional_id, 'invoice_file', appointmentId, 'delete', 'PDF da NF removido')
+          return json({ ok: true })
         }
       }
 
