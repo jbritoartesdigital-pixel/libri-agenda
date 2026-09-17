@@ -2,6 +2,7 @@ const jsonHeaders = { 'Content-Type': 'application/json' }
 
 async function request(path, options = {}) {
   const response = await fetch(path, {
+    credentials: 'include',
     ...options,
     headers: {
       ...jsonHeaders,
@@ -19,7 +20,9 @@ async function request(path, options = {}) {
 
   if (!response.ok) {
     const message = data?.error || data?.message || `Erro ${response.status}`
-    throw new Error(message)
+    const err = new Error(message)
+    err.status = response.status
+    throw err
   }
 
   return data
