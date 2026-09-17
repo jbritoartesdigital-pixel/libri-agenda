@@ -45,24 +45,117 @@ function overlaps(startA, endA, startB, endB) {
   return startA < endB && endA > startB
 }
 
-async function getSession(request, env) {
-  const accessRequired = String(env.REQUIRE_ACCESS || 'false').toLowerCase() === 'true'
-  const email = request.headers.get('CF-Access-Authenticated-User-Email') || ''
+const SESSION_COOKIE = 'libri_session'
+const SESSION_MAX_AGE = 60 * 60 * 24 * 30
+const PBKDF2_ITERATIONS = 210000
 
-  if (!accessRequired) {
-    return { authenticated: false, role: 'admin', name: 'Administradora', email: '', professional_id: null }
+function bytesToBase64(bytes) {
+  let binary = ''
+  const view = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes)
+  for (const byte of view) binary += String.fromCharCode(byte)
+  return btoa(binary)
+}
+
+function base64ToBytes(value) {
+  const binary = atob(value)
+  return Uint8Array.from(binary, (char) => char.charCodeAt(0))
+}
+
+function cookieValue(request, name) {
+  const cookie = request.headers.get('Cookie') || ''
+  const parts = cookie.split(';').map((item) => item.trim())
+  for (const part of parts) {
+    const index = part.indexOf('=')
+    if (index === -1) continue
+    if (part.slice(0, index) === name) return decodeURIComponent(part.slice(index + 1))
   }
+  return ''
+}
 
-  if (!email) return null
+async function sha256(value) {
+  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(value))
+  return bytesToBase64(digest)
+}
 
-  const user = await env.DB.prepare(`
-    SELECT id, name, email, role, professional_id
-    FROM users
-    WHERE lower(email) = lower(?) AND active = 1
+async function passwordHash(password, saltBase64 = '') {
+  const salt = saltBase64 ? base64ToBytes(saltBase64) : crypto.getRandomValues(new Uint8Array(16))
+  const key = await crypto.subtle.importKey(
+    'raw',
+    new TextEncoder().encode(password),
+    'PBKDF2',
+    false,
+    ['deriveBits'],
+  )
+  const bits = await crypto.subtle.deriveBits(
+    { name: 'PBKDF2', hash: 'SHA-256', salt, iterations: PBKDF2_ITERATIONS },
+    key,
+    256,
+  )
+  return { salt: bytesToBase64(salt), hash: bytesToBase64(bits) }
+}
+
+async function passwordMatches(password, salt, expectedHash) {
+  const result = await passwordHash(password, salt)
+  return result.hash === expectedHash
+}
+
+function sessionCookie(token, maxAge = SESSION_MAX_AGE) {
+  return `${SESSION_COOKIE}=${encodeURIComponent(token)}; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=${maxAge}`
+}
+
+function authJson(data, token = null, init = {}) {
+  const headers = new Headers(init.headers || {})
+  if (token !== null) headers.append('Set-Cookie', sessionCookie(token, token ? SESSION_MAX_AGE : 0))
+  return json(data, { ...init, headers })
+}
+
+async function createSession(env, account) {
+  const rawToken = bytesToBase64(crypto.getRandomValues(new Uint8Array(32)))
+  const tokenHash = await sha256(rawToken)
+  const expiresAt = Math.floor(Date.now() / 1000) + SESSION_MAX_AGE
+  await env.DB.prepare('DELETE FROM auth_sessions WHERE expires_at <= ?').bind(Math.floor(Date.now() / 1000)).run()
+  await env.DB.prepare(`
+    INSERT INTO auth_sessions (account_id, token_hash, expires_at)
+    VALUES (?, ?, ?)
+  `).bind(account.id, tokenHash, expiresAt).run()
+  return rawToken
+}
+
+async function getSession(request, env) {
+  const token = cookieValue(request, SESSION_COOKIE)
+  if (!token) return null
+  const tokenHash = await sha256(token)
+  const now = Math.floor(Date.now() / 1000)
+  const row = await env.DB.prepare(`
+    SELECT
+      a.id AS account_id,
+      a.user_id,
+      a.role,
+      a.professional_id,
+      a.slug,
+      u.name,
+      u.email
+    FROM auth_sessions s
+    JOIN auth_accounts a ON a.id = s.account_id
+    LEFT JOIN users u ON u.id = a.user_id
+    WHERE s.token_hash = ?
+      AND s.expires_at > ?
+      AND a.active = 1
     LIMIT 1
-  `).bind(email).first()
+  `).bind(tokenHash, now).first()
 
-  return user ? { authenticated: true, ...user } : null
+  if (!row) return null
+  return {
+    authenticated: true,
+    id: row.user_id || null,
+    account_id: row.account_id,
+    user_id: row.user_id || null,
+    role: row.role,
+    professional_id: row.professional_id,
+    slug: row.slug,
+    name: row.name || (row.role === 'admin' ? 'Administradora' : 'Profissional'),
+    email: row.email || '',
+  }
 }
 
 function canAccessProfessional(session, professionalId) {
@@ -77,7 +170,7 @@ async function audit(env, session, professionalId, entityType, entityId, action,
       VALUES (?, ?, ?, ?, ?, ?)
     `).bind(
       professionalId || null,
-      session?.id || null,
+      session?.user_id || session?.id || null,
       entityType,
       entityId || null,
       action,
@@ -198,9 +291,79 @@ export default {
 
       if (!env.DB) return error('D1 binding DB não configurado.', 503)
 
+      // AUTH ---------------------------------------------------------------
+      if (url.pathname === '/api/auth/session' && request.method === 'GET') {
+        const session = await getSession(request, env)
+        const countRow = await env.DB.prepare("SELECT COUNT(*) AS total FROM auth_accounts WHERE role = 'admin' AND active = 1").first()
+        return json({
+          ...(session || { authenticated: false }),
+          setup_required: Number(countRow?.total || 0) === 0,
+        })
+      }
+
+      if (url.pathname === '/api/auth/setup' && request.method === 'POST') {
+        const countRow = await env.DB.prepare("SELECT COUNT(*) AS total FROM auth_accounts WHERE role = 'admin' AND active = 1").first()
+        if (Number(countRow?.total || 0) > 0) return error('A administradora já foi configurada.', 409)
+        const data = await bodyJson(request)
+        const name = String(data.name || 'Julianna').trim() || 'Julianna'
+        const password = String(data.password || '')
+        if (password.length < 8) return error('A senha precisa ter pelo menos 8 caracteres.')
+
+        const userResult = await env.DB.prepare(`
+          INSERT INTO users (name, email, role, professional_id, active)
+          VALUES (?, ?, 'admin', NULL, 1)
+        `).bind(name, 'admin@libri.local').run()
+        const userId = userResult.meta?.last_row_id
+        const encrypted = await passwordHash(password)
+        const accountResult = await env.DB.prepare(`
+          INSERT INTO auth_accounts (user_id, role, professional_id, slug, password_hash, password_salt, active)
+          VALUES (?, 'admin', NULL, 'admin', ?, ?, 1)
+        `).bind(userId, encrypted.hash, encrypted.salt).run()
+        const account = { id: accountResult.meta?.last_row_id }
+        const token = await createSession(env, account)
+        return authJson({ authenticated: true, role: 'admin', slug: 'admin', name }, token, { status: 201 })
+      }
+
+      if (url.pathname === '/api/auth/login' && request.method === 'POST') {
+        const data = await bodyJson(request)
+        const slug = String(data.slug || '').trim().toLowerCase()
+        const password = String(data.password || '')
+        if (!slug || !password) return error('Informe a senha.', 400)
+        const account = await env.DB.prepare(`
+          SELECT a.*, u.name, u.email
+          FROM auth_accounts a
+          LEFT JOIN users u ON u.id = a.user_id
+          WHERE lower(a.slug) = lower(?) AND a.active = 1
+          LIMIT 1
+        `).bind(slug).first()
+        if (!account || !(await passwordMatches(password, account.password_salt, account.password_hash))) {
+          return error('Senha incorreta.', 401)
+        }
+        const token = await createSession(env, account)
+        return authJson({
+          authenticated: true,
+          id: account.user_id || null,
+          user_id: account.user_id || null,
+          account_id: account.id,
+          role: account.role,
+          professional_id: account.professional_id,
+          slug: account.slug,
+          name: account.name || (account.role === 'admin' ? 'Administradora' : 'Profissional'),
+          email: account.email || '',
+        }, token)
+      }
+
+      if (url.pathname === '/api/auth/logout' && request.method === 'POST') {
+        const token = cookieValue(request, SESSION_COOKIE)
+        if (token) {
+          const tokenHash = await sha256(token)
+          await env.DB.prepare('DELETE FROM auth_sessions WHERE token_hash = ?').bind(tokenHash).run()
+        }
+        return authJson({ ok: true }, '')
+      }
+
       const session = await getSession(request, env)
-      const accessRequired = String(env.REQUIRE_ACCESS || 'false').toLowerCase() === 'true'
-      if (accessRequired && !session) return error('Acesso não autorizado.', 401)
+      if (!session) return error('Acesso não autorizado.', 401)
 
       if (url.pathname === '/api/session' && request.method === 'GET') {
         return json(session)
@@ -208,18 +371,21 @@ export default {
 
       // PROFESSIONALS -------------------------------------------------------
       if (url.pathname === '/api/professionals' && request.method === 'GET') {
-        const where = session?.role === 'professional' ? 'WHERE id = ? AND active = 1' : 'WHERE active = 1'
+        const where = session?.role === 'professional' ? 'WHERE p.id = ? AND p.active = 1' : 'WHERE p.active = 1'
         const stmt = env.DB.prepare(`
-          SELECT id, name, specialty, professional_registry, photo_url, logo_url,
-                 primary_color, secondary_color, accent_color, theme_mode, active,
-                 online_enabled, in_person_enabled, online_platform, online_link,
-                 clinic_name, clinic_address, first_online_price, first_in_person_price,
-                 followup_online_price, followup_in_person_price,
-                 first_appointment_duration, followup_appointment_duration,
-                 interval_minutes, pix_key, pix_holder, payment_instructions, invoice_mode
-          FROM professionals
+          SELECT p.id, p.name, p.specialty, p.professional_registry, p.photo_url, p.logo_url,
+                 p.primary_color, p.secondary_color, p.accent_color, p.theme_mode, p.active,
+                 p.online_enabled, p.in_person_enabled, p.online_platform, p.online_link,
+                 p.clinic_name, p.clinic_address, p.first_online_price, p.first_in_person_price,
+                 p.followup_online_price, p.followup_in_person_price,
+                 p.first_appointment_duration, p.followup_appointment_duration,
+                 p.interval_minutes, p.pix_key, p.pix_holder, p.payment_instructions, p.invoice_mode,
+                 (SELECT aa.slug FROM auth_accounts aa
+                    WHERE aa.professional_id = p.id AND aa.role = 'professional' AND aa.active = 1
+                    LIMIT 1) AS access_slug
+          FROM professionals p
           ${where}
-          ORDER BY name
+          ORDER BY p.name
         `)
         const result = session?.role === 'professional'
           ? await stmt.bind(session.professional_id).all()
@@ -289,6 +455,76 @@ export default {
           await audit(env, session, professionalId, 'professional', professionalId, 'update', 'Configurações atualizadas')
           const row = await env.DB.prepare('SELECT * FROM professionals WHERE id = ?').bind(professionalId).first()
           return json(row)
+        }
+      }
+
+      const professionalAccessMatch = url.pathname.match(/^\/api\/professionals\/(\d+)\/access$/)
+      if (professionalAccessMatch) {
+        const professionalId = Number(professionalAccessMatch[1])
+        if (session?.role !== 'admin') return error('Somente a administradora pode alterar o acesso.', 403)
+        const professional = await env.DB.prepare('SELECT id, name FROM professionals WHERE id = ?').bind(professionalId).first()
+        if (!professional) return error('Profissional não encontrado.', 404)
+
+        if (request.method === 'GET') {
+          const account = await env.DB.prepare(`
+            SELECT slug, active FROM auth_accounts
+            WHERE professional_id = ? AND role = 'professional'
+            LIMIT 1
+          `).bind(professionalId).first()
+          return json(account || { slug: '', active: 0 })
+        }
+
+        if (request.method === 'PUT') {
+          const data = await bodyJson(request)
+          const slug = String(data.slug || '').trim().toLowerCase()
+          const password = String(data.password || '')
+          if (!/^[a-z0-9][a-z0-9-]{2,39}$/.test(slug)) {
+            return error('O link deve ter de 3 a 40 caracteres, usando letras minúsculas, números ou hífen.')
+          }
+          if (slug === 'admin') return error('Este link é reservado.')
+
+          const conflict = await env.DB.prepare(`
+            SELECT id FROM auth_accounts
+            WHERE lower(slug) = lower(?) AND NOT (professional_id = ? AND role = 'professional')
+            LIMIT 1
+          `).bind(slug, professionalId).first()
+          if (conflict) return error('Este link já está em uso.')
+
+          let account = await env.DB.prepare(`
+            SELECT * FROM auth_accounts
+            WHERE professional_id = ? AND role = 'professional'
+            LIMIT 1
+          `).bind(professionalId).first()
+
+          if (!account) {
+            if (password.length < 8) return error('Defina uma senha com pelo menos 8 caracteres.')
+            const userResult = await env.DB.prepare(`
+              INSERT INTO users (name, email, role, professional_id, active)
+              VALUES (?, ?, 'professional', ?, 1)
+            `).bind(professional.name, `${slug}@libri.local`, professionalId).run()
+            const encrypted = await passwordHash(password)
+            await env.DB.prepare(`
+              INSERT INTO auth_accounts (user_id, role, professional_id, slug, password_hash, password_salt, active)
+              VALUES (?, 'professional', ?, ?, ?, ?, 1)
+            `).bind(userResult.meta?.last_row_id, professionalId, slug, encrypted.hash, encrypted.salt).run()
+          } else {
+            const fields = ['slug = ?', 'active = 1']
+            const values = [slug]
+            if (password) {
+              if (password.length < 8) return error('A senha precisa ter pelo menos 8 caracteres.')
+              const encrypted = await passwordHash(password)
+              fields.push('password_hash = ?', 'password_salt = ?')
+              values.push(encrypted.hash, encrypted.salt)
+            }
+            await env.DB.prepare(`UPDATE auth_accounts SET ${fields.join(', ')}, updated_at = CURRENT_TIMESTAMP WHERE id = ?`)
+              .bind(...values, account.id).run()
+            if (account.user_id) {
+              await env.DB.prepare('UPDATE users SET name = ?, active = 1 WHERE id = ?')
+                .bind(professional.name, account.user_id).run()
+            }
+          }
+          await audit(env, session, professionalId, 'auth_account', professionalId, 'update', 'Acesso do profissional atualizado')
+          return json({ slug, url: `/${slug}`, active: 1 })
         }
       }
 
