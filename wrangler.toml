@@ -1,0 +1,19 @@
+name = "libri-agenda-api"
+main = "worker/index.js"
+compatibility_date = "2026-09-17"
+
+[assets]
+directory = "./dist"
+binding = "ASSETS"
+not_found_handling = "single-page-application"
+run_worker_first = ["/api/*"]
+
+[vars]
+# Mude para "true" somente depois de proteger o app com Cloudflare Access
+# e cadastrar os e-mails permitidos na tabela users.
+REQUIRE_ACCESS = "false"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "libri-agenda"
+database_id = "b897896e-bc07-458c-bf49-ff51f46cf19c"
