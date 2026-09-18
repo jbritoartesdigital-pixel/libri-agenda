@@ -183,7 +183,7 @@ export default function AppointmentModal({
             <button onClick={() => onStatus('no_show')}>Faltou</button>
             <button onClick={() => onStatus('cancelled')} className="danger-soft">Cancelar consulta</button>
           </div>
-          {appointment.status === 'completed' && (
+          {(appointment.status === 'completed' || form.status === 'completed') && (
             <div className="return-row">
               <span>Agendar retorno:</span>
               {[15, 30, 45, 60].map((days) => {
