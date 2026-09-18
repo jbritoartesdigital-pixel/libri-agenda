@@ -44,11 +44,217 @@ const messageTemplateCatalog = [
   ['first_contact', 'Primeiro contato'], ['online_info', 'Informações - Online'],
   ['in_person_info', 'Informações - Presencial'], ['values_online', 'Valores - Online'],
   ['values_in_person', 'Valores - Presencial'], ['available_times', 'Horários disponíveis'],
-  ['appointment_confirmation', 'Confirmação de agendamento'], ['reminder', 'Lembrete'],
-  ['payment', 'Pagamento'], ['invoice_data', 'Solicitar dados para NF'], ['invoice_issued', 'NF emitida'],
+  ['appointment_confirmation', 'Confirmação de agendamento'], ['confirmation_request', 'Pedir confirmação'],
+  ['reminder', 'Lembrete'], ['payment', 'Pagamento'],
+  ['invoice_data', 'Solicitar dados para NF'], ['invoice_issued', 'NF emitida'],
   ['reschedule', 'Reagendamento'], ['cancellation', 'Cancelamento'],
   ['return_confirmation', 'Retorno agendado'], ['return_offer', 'Retorno'],
 ]
+
+const systemMessageDefaults = [
+  {
+    template_key: 'first_contact',
+    title: 'Primeiro contato',
+    content: `Olá, {primeiro_nome}! Tudo bem? 🤍
+
+Como posso te ajudar?
+
+As consultas com {profissional} podem ser online ou presenciais.`,
+    active: 1,
+  },
+  {
+    template_key: 'online_info',
+    title: 'Informações - Online',
+    content: `Olá, {primeiro_nome}!
+
+O atendimento online com {profissional} é realizado por videochamada.
+
+Se quiser, posso te passar os valores e verificar os próximos horários disponíveis.`,
+    active: 1,
+  },
+  {
+    template_key: 'in_person_info',
+    title: 'Informações - Presencial',
+    content: `Olá, {primeiro_nome}!
+
+O atendimento presencial com {profissional} é realizado no consultório.
+
+Endereço: {endereco}
+
+Se quiser, posso te passar os valores e verificar os próximos horários disponíveis.`,
+    active: 1,
+  },
+  {
+    template_key: 'values_online',
+    title: 'Valores - Online',
+    content: `Olá, {primeiro_nome}!
+
+Os valores para atendimento online com {profissional} são:
+
+Primeira consulta: {valor_primeira}
+Retorno: {valor_retorno}
+
+Se quiser, posso verificar os horários disponíveis para você.`,
+    active: 1,
+  },
+  {
+    template_key: 'values_in_person',
+    title: 'Valores - Presencial',
+    content: `Olá, {primeiro_nome}!
+
+Os valores para atendimento presencial com {profissional} são:
+
+Primeira consulta: {valor_primeira}
+Retorno: {valor_retorno}
+
+Se quiser, posso verificar os horários disponíveis para você.`,
+    active: 1,
+  },
+  {
+    template_key: 'available_times',
+    title: 'Horários disponíveis',
+    content: `Olá, {primeiro_nome}!
+
+Tenho estes horários disponíveis:
+
+{horarios}
+
+Me diga qual deles fica melhor para você.`,
+    active: 1,
+  },
+  {
+    template_key: 'appointment_confirmation',
+    title: 'Confirmação de agendamento',
+    content: `Olá, {primeiro_nome}! Seu agendamento com {profissional} está confirmado.
+
+📅 {data}
+🕐 {hora}
+📍 {modalidade}
+
+Se precisar falar comigo antes da consulta, pode chamar por aqui.`,
+    active: 1,
+  },
+  {
+    template_key: 'return_confirmation',
+    title: 'Retorno agendado',
+    content: `Olá, {primeiro_nome}! Seu retorno com {profissional} ficou agendado.
+
+📅 {data}
+🕐 {hora}
+📍 {modalidade}
+
+Se precisar alterar o horário, pode me avisar por aqui.`,
+    active: 1,
+  },
+  {
+    template_key: 'reminder',
+    title: 'Lembrete',
+    content: `Olá, {primeiro_nome}!
+
+Passando para lembrar da sua consulta com {profissional}.
+
+📅 {data}
+🕐 {hora}
+📍 {modalidade}
+
+Se puder, me confirme o recebimento desta mensagem.`,
+    active: 1,
+  },
+  {
+    template_key: 'payment',
+    title: 'Pagamento',
+    content: `Olá, {primeiro_nome}!
+
+Para o pagamento da consulta com {profissional}, você pode realizar via PIX.
+
+Valor: {valor}
+Chave PIX: {pix}
+
+Depois do pagamento, se puder me enviar o comprovante por aqui, agradeço.`,
+    active: 1,
+  },
+  {
+    template_key: 'invoice_data',
+    title: 'Solicitar dados para NF',
+    content: `Olá, {primeiro_nome}!
+
+Para emissão da nota fiscal, preciso dos seguintes dados:
+
+Nome completo
+CPF
+E-mail
+Endereço completo com CEP
+
+Pode me enviar por aqui, por favor?`,
+    active: 1,
+  },
+  {
+    template_key: 'invoice_issued',
+    title: 'NF emitida',
+    content: `Olá, {primeiro_nome}!
+
+Sua nota fiscal referente à consulta com {profissional} já foi emitida.
+
+Estou te enviando o arquivo por aqui.`,
+    active: 1,
+  },
+  {
+    template_key: 'reschedule',
+    title: 'Reagendamento',
+    content: `Olá, {primeiro_nome}!
+
+Seu atendimento com {profissional} foi reagendado.
+
+📅 {data}
+🕐 {hora}
+📍 {modalidade}
+
+Se precisar de qualquer ajuste, pode me avisar por aqui.`,
+    active: 1,
+  },
+  {
+    template_key: 'cancellation',
+    title: 'Cancelamento',
+    content: `Olá, {primeiro_nome}!
+
+Seu atendimento com {profissional}, marcado para {data} às {hora}, foi cancelado.
+
+Quando quiser agendar uma nova data, pode me chamar por aqui.`,
+    active: 1,
+  },
+  {
+    template_key: 'return_offer',
+    title: 'Retorno',
+    content: `Olá, {primeiro_nome}!
+
+Já podemos verificar uma data para seu retorno com {profissional}.
+
+Se quiser, eu posso te enviar os próximos horários disponíveis.`,
+    active: 1,
+  },
+  {
+    template_key: 'confirmation_request',
+    title: 'Pedir confirmação',
+    content: `Olá, {primeiro_nome}!
+
+Estou entrando em contato para confirmar sua consulta com {profissional}.
+
+📅 {data}
+🕐 {hora}
+📍 {modalidade}
+
+Pode me confirmar se está tudo certo para esse horário?`,
+    active: 1,
+  },
+]
+
+function firstName(name = '') {
+  return String(name || '').trim().split(/\s+/).filter(Boolean)[0] || ''
+}
+
+function systemMessage(key) {
+  return systemMessageDefaults.find((item) => item.template_key === key) || null
+}
 
 function initials(name = '') {
   return name.split(' ').filter(Boolean).slice(0, 2).map((p) => p[0]).join('').toUpperCase() || 'P'
@@ -498,16 +704,26 @@ export default function App() {
   function messageTemplate(key) {
     const custom = messages.find((m) => m.template_key === key)?.content
     if (custom) return custom
-    return defaultMessages.find((m) => m.template_key === key)?.content || ''
+
+    const globalDefault = defaultMessages.find((m) => m.template_key === key)?.content
+    if (globalDefault) return globalDefault
+
+    return systemMessage(key)?.content || ''
   }
 
   function appointmentVars(item) {
+    const inPerson = item.modality === 'in_person'
+
     return {
       nome: item.patient_name,
+      primeiro_nome: firstName(item.patient_name),
       data: formatDate(item.appointment_date),
       hora: item.start_time,
-      modalidade: item.modality === 'online' ? 'Online' : 'Presencial',
+      modalidade: inPerson ? 'Presencial' : 'Online',
       valor: formatBRL(item.price),
+      valor_primeira: formatBRL(inPerson ? professional?.first_in_person_price : professional?.first_online_price),
+      valor_retorno: formatBRL(inPerson ? professional?.followup_in_person_price : professional?.followup_online_price),
+      endereco: professional?.clinic_address || '',
       link_consulta: professional?.online_link || '',
       pix: professional?.pix_key || '',
       profissional: professional?.name || '',
@@ -524,8 +740,16 @@ export default function App() {
 
   function whatsappPatient(patient, key = 'first_contact') {
     try {
-      const fallback = `Olá, ${patient.full_name}! Tudo bem? Eu cuido dos agendamentos de ${professional.name}. Como posso te ajudar?`
-      const text = renderTemplate(messageTemplate(key) || fallback, { nome: patient.full_name, profissional: professional?.name || '' })
+      const text = renderTemplate(messageTemplate(key), {
+        nome: patient.full_name,
+        primeiro_nome: firstName(patient.full_name),
+        profissional: professional?.name || '',
+        valor_primeira: formatBRL(professional?.first_online_price),
+        valor_retorno: formatBRL(professional?.followup_online_price),
+        endereco: professional?.clinic_address || '',
+        link_consulta: professional?.online_link || '',
+        pix: professional?.pix_key || '',
+      })
       openWhatsApp(patient.whatsapp, text)
     } catch (e) { setError(e.message) }
   }
@@ -537,8 +761,14 @@ export default function App() {
 
   function useSelectedSlots(slots) {
     const lines = slots.map((s) => `• ${formatDate(s.date)} às ${s.start_time}`).join('\n')
-    const template = messageTemplate('available_times') || 'Olá, {nome}! Tenho estes horários disponíveis:\n\n{horarios}\n\nQual deles fica melhor para você?'
-    const text = renderTemplate(template, { nome: messagePatient.full_name, horarios: lines, profissional: professional?.name || '' })
+    const template = messageTemplate('available_times')
+    const text = renderTemplate(template, {
+      nome: messagePatient.full_name,
+      primeiro_nome: firstName(messagePatient.full_name),
+      horarios: lines,
+      profissional: professional?.name || '',
+      endereco: professional?.clinic_address || '',
+    })
     try { openWhatsApp(messagePatient.whatsapp, text) } catch (e) { setError(e.message) }
     setAvailability(null); setMessagePatient(null)
   }
@@ -728,12 +958,13 @@ function AdminHomeScreen({ session, professionals, onOpen, onAdd, onMessages }) 
 
 function DefaultMessagesScreen({ messages, onSave }) {
   const map = Object.fromEntries(messages.map((m)=>[m.template_key,m]))
+  const systemMap = Object.fromEntries(systemMessageDefaults.map((m)=>[m.template_key,m]))
   const [editing,setEditing]=useState(null)
   return <>
     <section className="page-head compact"><div><span className="eyebrow">Central administrativa</span><h1>Mensagens padrão</h1><p>Esses textos são usados automaticamente quando o profissional não possui uma versão personalizada.</p></div></section>
     <div className="message-grid">
-      {messageTemplateCatalog.map(([key,title])=>{const item=map[key];return <article className="message-card" key={key}>
-        <div className="message-card-head"><div><strong>{item?.title||title}</strong><small>Padrão · {key}</small></div><button className="ghost-button small" onClick={()=>setEditing(item||{template_key:key,title,content:'',active:1})}>Editar</button></div>
+      {messageTemplateCatalog.map(([key,title])=>{const item=map[key]||systemMap[key]||{template_key:key,title,content:'',active:1};return <article className="message-card" key={key}>
+        <div className="message-card-head"><div><strong>{item?.title||title}</strong><small>Padrão · {key}</small></div><button className="ghost-button small" onClick={()=>setEditing({...item,template_key:key,title:item?.title||title})}>Editar</button></div>
         <p>{item?.content||'Ainda não configurada.'}</p>
       </article>})}
     </div>
@@ -1003,25 +1234,13 @@ function PatientsScreen({ patients, search, setSearch, appointments, professiona
   const customMap = useMemo(() => Object.fromEntries((messages || []).map((m) => [m.template_key, m])), [messages])
   const defaultMap = useMemo(() => Object.fromEntries((defaults || []).map((m) => [m.template_key, m])), [defaults])
 
-  const fallbackTemplates = {
-    first_contact: 'Olá, {nome}! Tudo bem? Como posso te ajudar?',
-    online_info: 'Olá, {nome}! O atendimento online com {profissional} é realizado por videochamada.',
-    in_person_info: 'Olá, {nome}! O atendimento presencial com {profissional} é realizado no endereço informado pela equipe.',
-    values_online: 'Olá, {nome}! Posso te passar os valores do atendimento online com {profissional}.',
-    values_in_person: 'Olá, {nome}! Posso te passar os valores do atendimento presencial com {profissional}.',
-    appointment_confirmation: 'Olá, {nome}! Seu agendamento com {profissional} está confirmado.\\n\\n📅 {data}\\n🕐 {hora}\\n📍 {modalidade}',
-    return_confirmation: 'Olá, {nome}! Seu retorno com {profissional} ficou agendado. 🤍\\n\\n📅 {data}\\n🕐 {hora}\\n📍 {modalidade}',
-    reminder: 'Olá, {nome}! Passando para lembrar da sua consulta com {profissional}.\\n\\n📅 {data}\\n🕐 {hora}\\n📍 {modalidade}',
-    payment: 'Olá, {nome}! Para o pagamento da consulta com {profissional}, você pode realizar via PIX.\\n\\nValor: {valor}\\nChave PIX: {pix}',
-    invoice_data: 'Olá, {nome}! Para emissão da nota fiscal, preciso dos seus dados fiscais.',
-    invoice_issued: 'Olá, {nome}! Sua nota fiscal já foi emitida.',
-    reschedule: 'Olá, {nome}! Sobre seu agendamento de {data} às {hora}, posso te ajudar com o reagendamento.',
-    cancellation: 'Olá, {nome}! Estou entrando em contato sobre seu agendamento de {data} às {hora}.',
-    return_offer: 'Olá, {nome}! Quando quiser, posso verificar os horários disponíveis para seu retorno com {profissional}.',
-  }
+  const systemMap = useMemo(
+    () => Object.fromEntries(systemMessageDefaults.map((m) => [m.template_key, m])),
+    [],
+  )
 
   function templateFor(key) {
-    return customMap[key]?.content || defaultMap[key]?.content || fallbackTemplates[key] || ''
+    return customMap[key]?.content || defaultMap[key]?.content || systemMap[key]?.content || ''
   }
 
   function futureAppointments(patient) {
@@ -1049,13 +1268,25 @@ function PatientsScreen({ patients, search, setSearch, appointments, professiona
 
     if (option.requires && !appointment) return
 
+    const priceModality = option.key === 'values_in_person'
+      ? 'in_person'
+      : option.key === 'values_online'
+        ? 'online'
+        : appointment?.modality || messagePatient.preferred_modality || 'online'
+
+    const inPerson = priceModality === 'in_person'
+
     const vars = {
       nome: messagePatient.full_name,
+      primeiro_nome: firstName(messagePatient.full_name),
       profissional: professional?.name || '',
       data: appointment ? formatDate(appointment.appointment_date) : '',
       hora: appointment?.start_time || '',
       modalidade: appointment ? (appointment.modality === 'online' ? 'Online' : 'Presencial') : '',
       valor: appointment ? formatBRL(appointment.price) : '',
+      valor_primeira: formatBRL(inPerson ? professional?.first_in_person_price : professional?.first_online_price),
+      valor_retorno: formatBRL(inPerson ? professional?.followup_in_person_price : professional?.followup_online_price),
+      endereco: professional?.clinic_address || '',
       pix: professional?.pix_key || '',
       link_consulta: professional?.online_link || '',
     }
@@ -1120,6 +1351,7 @@ function PatientMessageModal({ patient, future, templateFor, onClose, onSend }) 
     { key: 'values_in_person', title: 'Valores do presencial' },
     { key: 'available_times', title: 'Horários disponíveis', special: 'times' },
     { key: 'appointment_confirmation', title: 'Agendamento confirmado', requires: 'appointment' },
+    { key: 'confirmation_request', title: 'Pedir confirmação', requires: 'appointment' },
     { key: 'return_confirmation', title: 'Retorno agendado', requires: 'return' },
     { key: 'reminder', title: 'Lembrete da consulta', requires: 'appointment' },
     { key: 'payment', title: 'Pagamento', requires: 'appointment' },
@@ -1173,6 +1405,7 @@ function PendingScreen({ confirmations, payments, invoices, onOpen, onWhatsApp, 
 function MessagesScreen({ messages, defaults, professional, onSave, onReset }) {
   const customMap = Object.fromEntries(messages.map((m)=>[m.template_key,m]))
   const defaultMap = Object.fromEntries(defaults.map((m)=>[m.template_key,m]))
+  const systemMap = Object.fromEntries(systemMessageDefaults.map((m)=>[m.template_key,m]))
   const [editing, setEditing] = useState(null)
 
   return <>
@@ -1180,7 +1413,7 @@ function MessagesScreen({ messages, defaults, professional, onSave, onReset }) {
     <div className="message-grid">{messageTemplateCatalog.map(([key,title])=>{
       const custom=customMap[key]
       const base=defaultMap[key]
-      const effective=custom||base
+      const effective=custom||base||systemMap[key]
       return <article className="message-card" key={key}>
         <div className="message-card-head">
           <div><strong>{effective?.title||title}</strong><small className={custom?'message-source custom':'message-source'}>{custom?'Personalizada':'Usando padrão'} · {key}</small></div>
@@ -1198,7 +1431,7 @@ function MessagesScreen({ messages, defaults, professional, onSave, onReset }) {
 
 function MessageEditor({ item, subtitle = 'Edite o texto da mensagem.', onClose, onSave }) {
   const [form,setForm]=useState(item)
-  return <Modal title="Editar mensagem" subtitle={subtitle} onClose={onClose} wide><form className="form-grid" onSubmit={(e)=>{e.preventDefault();onSave(form)}}><label className="field"><span>Título</span><input value={form.title} onChange={(e)=>setForm({...form,title:e.target.value})}/></label><label className="field"><span>Chave</span><input value={form.template_key} disabled/></label><label className="field span-2"><span>Mensagem</span><textarea rows="12" value={form.content||''} onChange={(e)=>setForm({...form,content:e.target.value})}/><small className="muted">Variáveis: {'{nome}'}, {'{profissional}'}, {'{data}'}, {'{hora}'}, {'{valor}'}, {'{horarios}'}, {'{pix}'}.</small></label><div className="modal-actions span-2"><button type="button" className="ghost-button" onClick={onClose}>Cancelar</button><button className="primary-button">Salvar mensagem</button></div></form></Modal>
+  return <Modal title="Editar mensagem" subtitle={subtitle} onClose={onClose} wide><form className="form-grid" onSubmit={(e)=>{e.preventDefault();onSave(form)}}><label className="field"><span>Título</span><input value={form.title} onChange={(e)=>setForm({...form,title:e.target.value})}/></label><label className="field"><span>Chave</span><input value={form.template_key} disabled/></label><label className="field span-2"><span>Mensagem</span><textarea rows="12" value={form.content||''} onChange={(e)=>setForm({...form,content:e.target.value})}/><small className="muted">Variáveis: {'{primeiro_nome}'}, {'{nome}'}, {'{profissional}'}, {'{data}'}, {'{hora}'}, {'{modalidade}'}, {'{valor}'}, {'{valor_primeira}'}, {'{valor_retorno}'}, {'{horarios}'}, {'{pix}'}, {'{endereco}'}, {'{link_consulta}'}.</small></label><div className="modal-actions span-2"><button type="button" className="ghost-button" onClick={onClose}>Cancelar</button><button className="primary-button">Salvar mensagem</button></div></form></Modal>
 }
 
 function SettingsScreen({ professional, session, rules, blocks, audit, passkeys, passkeyBusy, onEnablePasskey, onRemovePasskey, onEdit, onSaveRules, onBlock, onEditBlock }) {
