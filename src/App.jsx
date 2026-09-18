@@ -571,7 +571,7 @@ export default function App() {
         {session?.role === 'admin' && !inWorkspace && activeNav === 'Configurações' && (
           <AdminSettingsScreen session={session} passkeys={passkeys} passkeyBusy={passkeyBusy} onEnablePasskey={enablePasskey} onRemovePasskey={removePasskey} />
         )}
-        {professional && activeNav === 'Início' && <HomeScreen professional={professional} todayAppointments={todayAppointments} pendingConfirmations={pendingConfirmations} pendingPayments={pendingPayments} pendingInvoices={pendingInvoices} onOpenAppointment={setAppointmentModal} onAgenda={() => setActiveNav('Agenda')} onFind={() => setAvailability({ mode: 'pick', initial: { from: todayISO(), type: 'first', modality: 'online' }, context: { kind: 'new', draft: { appointment_type: 'first', modality: 'online' } } })} />}
+        {professional && activeNav === 'Início' && <HomeScreen professional={professional} todayAppointments={todayAppointments} pendingConfirmations={pendingConfirmations} pendingPayments={pendingPayments} pendingInvoices={pendingInvoices} onOpenAppointment={setAppointmentModal} onAgenda={() => setActiveNav('Agenda')} onFind={() => setAvailability({ mode: 'pick', initial: { from: todayISO(), type: 'first', modality: 'online' }, context: { kind: 'new', draft: { appointment_type: 'first', modality: 'online' } } })} onSettings={() => setActiveNav('Configurações')} />}
         {professional && activeNav === 'Agenda' && <AgendaScreen date={calendarDate} setDate={setCalendarDate} view={calendarView} setView={setCalendarView} appointments={appointments} blocks={blocks} onAppointment={setAppointmentModal} onNew={(date) => setAppointmentModal({ initial: { appointment_date: date } })} onBlock={(date, block = null) => setBlockModal({ date, block })} />}
         {professional && activeNav === 'Pacientes' && <PatientsScreen patients={patients} search={search} setSearch={setSearch} appointments={appointments} onOpen={openPatient} onNew={() => openPatient()} onWhatsApp={whatsappPatient} onTimes={sendAvailableTimes} onSchedule={(patient) => setAppointmentModal({ initial: { patient_id: patient.id, appointment_date: todayISO(), modality: patient.preferred_modality || 'online' } })} />}
         {professional && activeNav === 'Pendências' && <PendingScreen confirmations={pendingConfirmations} payments={pendingPayments} invoices={pendingInvoices} onOpen={setAppointmentModal} onWhatsApp={whatsappAppointment} onInvoice={setInvoiceModal} />}
@@ -718,9 +718,15 @@ function ProfessionalsScreen({ professionals, onOpen, onEdit, onAdd }) {
   </>
 }
 
-function HomeScreen({ professional, todayAppointments, pendingConfirmations, pendingPayments, pendingInvoices, onOpenAppointment, onAgenda, onFind }) {
+function HomeScreen({ professional, todayAppointments, pendingConfirmations, pendingPayments, pendingInvoices, onOpenAppointment, onAgenda, onFind, onSettings }) {
   return <>
-    <section className="hero"><div><span className="eyebrow">{professional.specialty}</span><h1>Agenda da {professional.name}</h1><p>Consultas, pendências e próximos passos em uma visão limpa.</p></div><div className="hero-badge"><Clock3 size={18} /> Consulta padrão: {professional.first_appointment_duration || 50} min</div></section>
+    <section className="hero">
+      <div><span className="eyebrow">{professional.specialty}</span><h1>Agenda da {professional.name}</h1><p>Consultas, pendências e próximos passos em uma visão limpa.</p></div>
+      <div className="hero-actions">
+        <div className="hero-badge"><Clock3 size={18} /> Consulta padrão: {professional.first_appointment_duration || 50} min</div>
+        <button className="ghost-button workspace-settings-cta" onClick={onSettings}><Settings size={17}/> Configurações</button>
+      </div>
+    </section>
     <section className="stats-grid"><Stat icon={CalendarDays} label="Consultas hoje" value={todayAppointments.length} /><Stat icon={MessageCircle} label="Aguardando confirmação" value={pendingConfirmations.length} /><Stat icon={WalletCards} label="Pagamentos pendentes" value={pendingPayments.length} /><Stat icon={FileText} label="Notas fiscais" value={pendingInvoices.length} /></section>
     <section className="dashboard-grid">
       <div className="panel main-panel"><div className="panel-head"><div><span className="eyebrow">Hoje</span><h2>Consultas do dia</h2></div><button className="text-button" onClick={onAgenda}><CalendarDays size={17} /> Ver agenda</button></div><div className="appointment-list">{todayAppointments.map((a) => <AppointmentRow key={a.id} item={a} onOpen={() => onOpenAppointment(a)} />)}{!todayAppointments.length && <div className="empty-state">Nenhuma consulta hoje.</div>}</div></div>
@@ -946,6 +952,6 @@ function PendingItem({ item, onOpen, action }) { return <div className="pending-
 function MobileNav({ active, setActive, role, inWorkspace, onHome }) {
   const items = role === 'admin' && !inWorkspace
     ? [['Home',Home],['Profissionais',Stethoscope],['Mensagens padrão',MessageCircle],['Configurações',Settings]]
-    : [['Início',Home],['Agenda',CalendarDays],['Pacientes',UsersRound],['Pendências',WalletCards],['Mensagens',MessageCircle]]
+    : [['Início',Home],['Agenda',CalendarDays],['Pacientes',UsersRound],['Pendências',WalletCards],['Mensagens',MessageCircle],['Configurações',Settings]]
   return <div className="mobile-nav" style={{ gridTemplateColumns: `repeat(${items.length}, 1fr)` }}>{items.map(([name,Icon])=><button key={name} className={active===name?'active':''} onClick={()=>setActive(name)}><Icon size={19}/><span>{name}</span></button>)}</div>
 }
