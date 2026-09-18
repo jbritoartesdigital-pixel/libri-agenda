@@ -85,6 +85,8 @@ function normalizeBlockData(data) {
 
 const SESSION_COOKIE = 'libri_session'
 const SESSION_MAX_AGE = 60 * 60 * 24 * 30
+const SESSION_SHORT_AGE = 60 * 60 * 12
+const PASSKEY_CHALLENGE_AGE = 60 * 5
 const PBKDF2_ITERATIONS = 100000
 
 function bytesToBase64(bytes) {
@@ -137,26 +139,204 @@ async function passwordMatches(password, salt, expectedHash) {
   return result.hash === expectedHash
 }
 
-function sessionCookie(token, maxAge = SESSION_MAX_AGE) {
-  return `${SESSION_COOKIE}=${encodeURIComponent(token)}; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=${maxAge}`
+function sessionCookie(token, maxAge = SESSION_MAX_AGE, persistent = true) {
+  if (!token) {
+    return `${SESSION_COOKIE}=; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=0`
+  }
+  const persistence = persistent ? `; Max-Age=${maxAge}` : ''
+  return `${SESSION_COOKIE}=${encodeURIComponent(token)}; Path=/; HttpOnly; Secure; SameSite=Lax${persistence}`
 }
 
-function authJson(data, token = null, init = {}) {
+function authJson(data, token = null, init = {}, cookieOptions = {}) {
   const headers = new Headers(init.headers || {})
-  if (token !== null) headers.append('Set-Cookie', sessionCookie(token, token ? SESSION_MAX_AGE : 0))
+  if (token !== null) {
+    headers.append('Set-Cookie', sessionCookie(
+      token,
+      cookieOptions.maxAge ?? SESSION_MAX_AGE,
+      cookieOptions.persistent ?? true,
+    ))
+  }
   return json(data, { ...init, headers })
 }
 
-async function createSession(env, account) {
+async function createSession(env, account, remember = true) {
   const rawToken = bytesToBase64(crypto.getRandomValues(new Uint8Array(32)))
   const tokenHash = await sha256(rawToken)
-  const expiresAt = Math.floor(Date.now() / 1000) + SESSION_MAX_AGE
+  const maxAge = remember ? SESSION_MAX_AGE : SESSION_SHORT_AGE
+  const expiresAt = Math.floor(Date.now() / 1000) + maxAge
   await env.DB.prepare('DELETE FROM auth_sessions WHERE expires_at <= ?').bind(Math.floor(Date.now() / 1000)).run()
   await env.DB.prepare(`
     INSERT INTO auth_sessions (account_id, token_hash, expires_at)
     VALUES (?, ?, ?)
   `).bind(account.id, tokenHash, expiresAt).run()
-  return rawToken
+  return { token: rawToken, maxAge, persistent: remember }
+}
+
+
+function bytesToBase64Url(bytes) {
+  return bytesToBase64(bytes).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, '')
+}
+
+function base64UrlToBytes(value) {
+  const normalized = String(value || '').replace(/-/g, '+').replace(/_/g, '/')
+  const padded = normalized + '='.repeat((4 - (normalized.length % 4)) % 4)
+  return base64ToBytes(padded)
+}
+
+function randomBase64Url(size = 32) {
+  return bytesToBase64Url(crypto.getRandomValues(new Uint8Array(size)))
+}
+
+function equalBytes(a, b) {
+  const left = a instanceof Uint8Array ? a : new Uint8Array(a)
+  const right = b instanceof Uint8Array ? b : new Uint8Array(b)
+  if (left.length !== right.length) return false
+  let diff = 0
+  for (let i = 0; i < left.length; i += 1) diff |= left[i] ^ right[i]
+  return diff === 0
+}
+
+function concatBytes(a, b) {
+  const left = a instanceof Uint8Array ? a : new Uint8Array(a)
+  const right = b instanceof Uint8Array ? b : new Uint8Array(b)
+  const out = new Uint8Array(left.length + right.length)
+  out.set(left, 0)
+  out.set(right, left.length)
+  return out
+}
+
+function readDerLength(bytes, state) {
+  let length = bytes[state.offset++]
+  if ((length & 0x80) === 0) return length
+  const count = length & 0x7f
+  if (count < 1 || count > 2) throw new Error('Assinatura biométrica inválida.')
+  length = 0
+  for (let i = 0; i < count; i += 1) length = (length << 8) | bytes[state.offset++]
+  return length
+}
+
+function derEcdsaToRaw(signature) {
+  const bytes = signature instanceof Uint8Array ? signature : new Uint8Array(signature)
+  if (bytes.length === 64) return bytes
+  const state = { offset: 0 }
+  if (bytes[state.offset++] !== 0x30) throw new Error('Assinatura biométrica inválida.')
+  readDerLength(bytes, state)
+  if (bytes[state.offset++] !== 0x02) throw new Error('Assinatura biométrica inválida.')
+  const rLength = readDerLength(bytes, state)
+  let r = bytes.slice(state.offset, state.offset + rLength)
+  state.offset += rLength
+  if (bytes[state.offset++] !== 0x02) throw new Error('Assinatura biométrica inválida.')
+  const sLength = readDerLength(bytes, state)
+  let s = bytes.slice(state.offset, state.offset + sLength)
+
+  while (r.length > 32 && r[0] === 0) r = r.slice(1)
+  while (s.length > 32 && s[0] === 0) s = s.slice(1)
+  if (r.length > 32 || s.length > 32) throw new Error('Assinatura biométrica inválida.')
+
+  const raw = new Uint8Array(64)
+  raw.set(r, 32 - r.length)
+  raw.set(s, 64 - s.length)
+  return raw
+}
+
+function clientDataFromBase64Url(value) {
+  const bytes = base64UrlToBytes(value)
+  const text = new TextDecoder().decode(bytes)
+  return { bytes, data: JSON.parse(text) }
+}
+
+async function createPasskeyChallenge(env, accountId, purpose, request) {
+  const now = Math.floor(Date.now() / 1000)
+  const url = new URL(request.url)
+  const challenge = randomBase64Url(32)
+  await env.DB.prepare('DELETE FROM passkey_challenges WHERE expires_at <= ?').bind(now).run()
+  await env.DB.prepare(`
+    INSERT INTO passkey_challenges (account_id, challenge, purpose, rp_id, origin, expires_at)
+    VALUES (?, ?, ?, ?, ?, ?)
+  `).bind(accountId, challenge, purpose, url.hostname, url.origin, now + PASSKEY_CHALLENGE_AGE).run()
+  return { challenge, rpId: url.hostname, origin: url.origin }
+}
+
+async function verifyPasskeyClientData(env, accountId, purpose, encodedClientData, expectedType) {
+  let parsed
+  try {
+    parsed = clientDataFromBase64Url(encodedClientData)
+  } catch {
+    throw new Error('Dados de autenticação inválidos.')
+  }
+
+  const challenge = String(parsed.data?.challenge || '')
+  const now = Math.floor(Date.now() / 1000)
+  const row = await env.DB.prepare(`
+    SELECT *
+    FROM passkey_challenges
+    WHERE account_id = ?
+      AND purpose = ?
+      AND challenge = ?
+      AND expires_at > ?
+    LIMIT 1
+  `).bind(accountId, purpose, challenge, now).first()
+
+  if (!row) throw new Error('A solicitação de biometria expirou. Tente novamente.')
+  if (parsed.data?.type !== expectedType) throw new Error('Tipo de autenticação inválido.')
+  if (parsed.data?.origin !== row.origin) throw new Error('Origem da autenticação inválida.')
+
+  return { ...parsed, challengeRow: row }
+}
+
+async function verifyAuthenticatorData(authenticatorData, rpId) {
+  const bytes = base64UrlToBytes(authenticatorData)
+  if (bytes.length < 37) throw new Error('Dados do autenticador inválidos.')
+
+  const expectedRpIdHash = new Uint8Array(
+    await crypto.subtle.digest('SHA-256', new TextEncoder().encode(rpId)),
+  )
+  if (!equalBytes(bytes.slice(0, 32), expectedRpIdHash)) {
+    throw new Error('Esta biometria não pertence a este endereço.')
+  }
+
+  const flags = bytes[32]
+  if ((flags & 0x01) === 0) throw new Error('Confirmação do usuário ausente.')
+  if ((flags & 0x04) === 0) throw new Error('A biometria ou bloqueio seguro do aparelho não foi confirmado.')
+
+  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength)
+  const signCount = view.getUint32(33, false)
+  return { bytes, signCount }
+}
+
+async function verifyPasskeySignature(publicKeySpki, signatureValue, authenticatorBytes, clientDataBytes) {
+  const key = await crypto.subtle.importKey(
+    'spki',
+    base64UrlToBytes(publicKeySpki),
+    { name: 'ECDSA', namedCurve: 'P-256' },
+    false,
+    ['verify'],
+  )
+
+  const clientHash = new Uint8Array(await crypto.subtle.digest('SHA-256', clientDataBytes))
+  const signedData = concatBytes(authenticatorBytes, clientHash)
+  const signature = base64UrlToBytes(signatureValue)
+  const rawSignature = derEcdsaToRaw(signature)
+
+  let valid = await crypto.subtle.verify(
+    { name: 'ECDSA', hash: 'SHA-256' },
+    key,
+    rawSignature,
+    signedData,
+  )
+
+  if (!valid && signature.length !== rawSignature.length) {
+    try {
+      valid = await crypto.subtle.verify(
+        { name: 'ECDSA', hash: 'SHA-256' },
+        key,
+        signature,
+        signedData,
+      )
+    } catch {}
+  }
+
+  return valid
 }
 
 async function getSession(request, env) {
@@ -412,8 +592,13 @@ export default {
         `).first()
 
         if (!account?.id) return error('Não foi possível criar o acesso da administradora.', 500)
-        const token = await createSession(env, account)
-        return authJson({ authenticated: true, role: 'admin', slug: 'admin', name }, token, { status: 201 })
+        const authSession = await createSession(env, account, true)
+        return authJson(
+          { authenticated: true, role: 'admin', slug: 'admin', name },
+          authSession.token,
+          { status: 201 },
+          authSession,
+        )
       }
 
       if (url.pathname === '/api/auth/login' && request.method === 'POST') {
@@ -431,7 +616,8 @@ export default {
         if (!account || !(await passwordMatches(password, account.password_salt, account.password_hash))) {
           return error('Senha incorreta.', 401)
         }
-        const token = await createSession(env, account)
+        const remember = data.remember !== false
+        const authSession = await createSession(env, account, remember)
         return authJson({
           authenticated: true,
           id: account.user_id || null,
@@ -442,7 +628,128 @@ export default {
           slug: account.slug,
           name: account.name || (account.role === 'admin' ? 'Administradora' : 'Profissional'),
           email: account.email || '',
-        }, token)
+        }, authSession.token, {}, authSession)
+      }
+
+      if (url.pathname === '/api/auth/passkey/login/options' && request.method === 'POST') {
+        const data = await bodyJson(request)
+        const slug = String(data.slug || '').trim().toLowerCase()
+        if (!slug) return error('Acesso inválido.')
+
+        const account = await env.DB.prepare(`
+          SELECT a.id, a.user_id, a.role, a.professional_id, a.slug, u.name, u.email
+          FROM auth_accounts a
+          LEFT JOIN users u ON u.id = a.user_id
+          WHERE lower(a.slug) = lower(?) AND a.active = 1
+          LIMIT 1
+        `).bind(slug).first()
+        if (!account) return error('Acesso não encontrado.', 404)
+
+        const credentials = await env.DB.prepare(`
+          SELECT credential_id
+          FROM passkey_credentials
+          WHERE account_id = ?
+          ORDER BY id
+        `).bind(account.id).all()
+        if (!(credentials.results || []).length) {
+          return error('Ainda não há biometria cadastrada para este acesso.', 404)
+        }
+
+        const challenge = await createPasskeyChallenge(env, account.id, 'login', request)
+        return json({
+          challenge: challenge.challenge,
+          rpId: challenge.rpId,
+          timeout: 60000,
+          allowCredentials: (credentials.results || []).map((item) => ({
+            type: 'public-key',
+            id: item.credential_id,
+          })),
+        })
+      }
+
+      if (url.pathname === '/api/auth/passkey/login/verify' && request.method === 'POST') {
+        const data = await bodyJson(request)
+        const slug = String(data.slug || '').trim().toLowerCase()
+        const credentialId = String(data.credential_id || '')
+        if (!slug || !credentialId) return error('Credencial biométrica inválida.')
+
+        const credential = await env.DB.prepare(`
+          SELECT
+            c.*,
+            a.id AS auth_account_id,
+            a.user_id,
+            a.role,
+            a.professional_id,
+            a.slug,
+            a.active,
+            u.name,
+            u.email
+          FROM passkey_credentials c
+          JOIN auth_accounts a ON a.id = c.account_id
+          LEFT JOIN users u ON u.id = a.user_id
+          WHERE c.credential_id = ?
+            AND lower(a.slug) = lower(?)
+            AND a.active = 1
+          LIMIT 1
+        `).bind(credentialId, slug).first()
+        if (!credential) return error('Biometria não reconhecida para este acesso.', 401)
+
+        try {
+          const client = await verifyPasskeyClientData(
+            env,
+            credential.account_id,
+            'login',
+            data.client_data_json,
+            'webauthn.get',
+          )
+          const authenticator = await verifyAuthenticatorData(
+            data.authenticator_data,
+            client.challengeRow.rp_id,
+          )
+          const valid = await verifyPasskeySignature(
+            credential.public_key_spki,
+            data.signature,
+            authenticator.bytes,
+            client.bytes,
+          )
+          if (!valid) return error('Não foi possível validar a biometria.', 401)
+
+          const previousCount = Number(credential.sign_count || 0)
+          const nextCount = Number(authenticator.signCount || 0)
+          if (previousCount > 0 && nextCount > 0 && nextCount <= previousCount) {
+            return error('A credencial biométrica apresentou uma inconsistência de segurança.', 401)
+          }
+
+          await env.DB.prepare(`
+            UPDATE passkey_credentials
+            SET sign_count = ?, last_used_at = CURRENT_TIMESTAMP
+            WHERE id = ?
+          `).bind(nextCount, credential.id).run()
+          await env.DB.prepare('DELETE FROM passkey_challenges WHERE id = ?').bind(client.challengeRow.id).run()
+
+          const remember = data.remember !== false
+          const account = {
+            id: credential.auth_account_id,
+            user_id: credential.user_id,
+            role: credential.role,
+            professional_id: credential.professional_id,
+            slug: credential.slug,
+          }
+          const authSession = await createSession(env, account, remember)
+          return authJson({
+            authenticated: true,
+            id: credential.user_id || null,
+            user_id: credential.user_id || null,
+            account_id: credential.auth_account_id,
+            role: credential.role,
+            professional_id: credential.professional_id,
+            slug: credential.slug,
+            name: credential.name || (credential.role === 'admin' ? 'Administradora' : 'Profissional'),
+            email: credential.email || '',
+          }, authSession.token, {}, authSession)
+        } catch (e) {
+          return error(e.message || 'Não foi possível validar a biometria.', 401)
+        }
       }
 
       if (url.pathname === '/api/auth/logout' && request.method === 'POST') {
@@ -459,6 +766,127 @@ export default {
 
       if (url.pathname === '/api/session' && request.method === 'GET') {
         return json(session)
+      }
+
+      if (url.pathname === '/api/auth/passkeys' && request.method === 'GET') {
+        const result = await env.DB.prepare(`
+          SELECT id, device_label, created_at, last_used_at
+          FROM passkey_credentials
+          WHERE account_id = ?
+          ORDER BY created_at DESC, id DESC
+        `).bind(session.account_id).all()
+        return json(result.results || [])
+      }
+
+      if (url.pathname === '/api/auth/passkey/register/options' && request.method === 'POST') {
+        const existing = await env.DB.prepare(`
+          SELECT credential_id
+          FROM passkey_credentials
+          WHERE account_id = ?
+        `).bind(session.account_id).all()
+        const challenge = await createPasskeyChallenge(env, session.account_id, 'register', request)
+        return json({
+          challenge: challenge.challenge,
+          rp: { name: 'Libri Agenda', id: challenge.rpId },
+          user: {
+            id: bytesToBase64Url(new TextEncoder().encode(`libri-account:${session.account_id}`)),
+            name: session.slug,
+            displayName: session.name || session.slug,
+          },
+          pubKeyCredParams: [{ type: 'public-key', alg: -7 }],
+          timeout: 60000,
+          authenticatorSelection: {
+            authenticatorAttachment: 'platform',
+            residentKey: 'preferred',
+            userVerification: 'required',
+          },
+          excludeCredentials: (existing.results || []).map((item) => ({
+            type: 'public-key',
+            id: item.credential_id,
+          })),
+        })
+      }
+
+      if (url.pathname === '/api/auth/passkey/register/verify' && request.method === 'POST') {
+        const data = await bodyJson(request)
+        const credentialId = String(data.credential_id || '')
+        const publicKeySpki = String(data.public_key_spki || '')
+        const algorithm = Number(data.algorithm)
+        if (!credentialId || !publicKeySpki) return error('Credencial biométrica incompleta.')
+        if (algorithm !== -7) return error('Este tipo de biometria ainda não é compatível.')
+
+        try {
+          const client = await verifyPasskeyClientData(
+            env,
+            session.account_id,
+            'register',
+            data.client_data_json,
+            'webauthn.create',
+          )
+
+          await crypto.subtle.importKey(
+            'spki',
+            base64UrlToBytes(publicKeySpki),
+            { name: 'ECDSA', namedCurve: 'P-256' },
+            false,
+            ['verify'],
+          )
+
+          const existing = await env.DB.prepare(`
+            SELECT id, account_id
+            FROM passkey_credentials
+            WHERE credential_id = ?
+            LIMIT 1
+          `).bind(credentialId).first()
+
+          if (existing && Number(existing.account_id) !== Number(session.account_id)) {
+            return error('Esta biometria já está vinculada a outro acesso.', 409)
+          }
+
+          if (existing) {
+            await env.DB.prepare(`
+              UPDATE passkey_credentials
+              SET public_key_spki = ?, device_label = ?, last_used_at = CURRENT_TIMESTAMP
+              WHERE id = ?
+            `).bind(
+              publicKeySpki,
+              String(data.device_label || 'Este aparelho').slice(0, 80),
+              existing.id,
+            ).run()
+          } else {
+            await env.DB.prepare(`
+              INSERT INTO passkey_credentials (
+                account_id, credential_id, public_key_spki, algorithm,
+                sign_count, device_label
+              )
+              VALUES (?, ?, ?, -7, 0, ?)
+            `).bind(
+              session.account_id,
+              credentialId,
+              publicKeySpki,
+              String(data.device_label || 'Este aparelho').slice(0, 80),
+            ).run()
+          }
+
+          await env.DB.prepare('DELETE FROM passkey_challenges WHERE id = ?').bind(client.challengeRow.id).run()
+          return json({ ok: true })
+        } catch (e) {
+          return error(e.message || 'Não foi possível cadastrar a biometria.', 400)
+        }
+      }
+
+      const passkeyDeleteMatch = url.pathname.match(/^\/api\/auth\/passkeys\/(\d+)$/)
+      if (passkeyDeleteMatch && request.method === 'DELETE') {
+        const id = Number(passkeyDeleteMatch[1])
+        const credential = await env.DB.prepare(`
+          SELECT id
+          FROM passkey_credentials
+          WHERE id = ? AND account_id = ?
+          LIMIT 1
+        `).bind(id, session.account_id).first()
+        if (!credential) return error('Biometria não encontrada.', 404)
+        await env.DB.prepare('DELETE FROM passkey_credentials WHERE id = ?').bind(id).run()
+        return json({ ok: true })
       }
 
       // PROFESSIONALS -------------------------------------------------------
@@ -646,20 +1074,41 @@ export default {
 
         if (request.method === 'POST') {
           const data = await bodyJson(request)
-          if (!String(data.full_name || '').trim()) return error('Nome do paciente é obrigatório.')
-          if (!String(data.whatsapp || '').trim()) return error('WhatsApp é obrigatório.')
+          const fullName = String(data.full_name || '').trim()
+          const whatsapp = String(data.whatsapp || '').trim()
+          if (!fullName) return error('Nome do paciente é obrigatório.')
+          if (!whatsapp) return error('WhatsApp é obrigatório.')
+
+          // Proteção contra cadastro duplicado por clique repetido:
+          // compara nome e número normalizado antes de inserir.
+          const sameName = await env.DB.prepare(`
+            SELECT id, full_name, whatsapp
+            FROM patients
+            WHERE professional_id = ?
+              AND archived = 0
+              AND lower(trim(full_name)) = lower(trim(?))
+          `).bind(professionalId, fullName).all()
+
+          const phoneKey = whatsapp.replace(/\D/g, '')
+          const duplicate = (sameName.results || []).find((item) =>
+            String(item.whatsapp || '').replace(/\D/g, '') === phoneKey
+          )
+          if (duplicate) {
+            return error('Este paciente já está cadastrado com o mesmo nome e WhatsApp.', 409)
+          }
+
           const result = await env.DB.prepare(`
             INSERT INTO patients (
               professional_id, full_name, whatsapp, email, preferred_modality,
               birth_date, administrative_notes
             ) VALUES (?, ?, ?, ?, ?, ?, ?)
           `).bind(
-            professionalId, String(data.full_name).trim(), String(data.whatsapp).trim(),
+            professionalId, fullName, whatsapp,
             data.email || '', data.preferred_modality || null, data.birth_date || null,
             data.administrative_notes || '',
           ).run()
           const id = result.meta?.last_row_id
-          await audit(env, session, professionalId, 'patient', id, 'create', `Paciente ${data.full_name} cadastrado`)
+          await audit(env, session, professionalId, 'patient', id, 'create', `Paciente ${fullName} cadastrado`)
           const row = await env.DB.prepare('SELECT * FROM patients WHERE id = ?').bind(id).first()
           return json(row, { status: 201 })
         }
@@ -684,6 +1133,22 @@ export default {
             .bind(...entries.map(([, value]) => value ?? null), patientId).run()
           await audit(env, session, current.professional_id, 'patient', patientId, 'update', 'Cadastro administrativo atualizado')
           return json(await env.DB.prepare('SELECT * FROM patients WHERE id = ?').bind(patientId).first())
+        }
+
+        if (request.method === 'DELETE') {
+          const count = await env.DB.prepare(`
+            SELECT COUNT(*) AS total
+            FROM appointments
+            WHERE patient_id = ?
+          `).bind(patientId).first()
+
+          if (Number(count?.total || 0) > 0) {
+            return error('Este paciente possui consultas vinculadas. Para preservar o histórico, arquive o cadastro em vez de excluir.', 409)
+          }
+
+          await env.DB.prepare('DELETE FROM patients WHERE id = ?').bind(patientId).run()
+          await audit(env, session, current.professional_id, 'patient', patientId, 'delete', `Cadastro de ${current.full_name} excluído sem consultas vinculadas`)
+          return json({ ok: true })
         }
       }
 
