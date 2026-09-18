@@ -46,7 +46,8 @@ const messageTemplateCatalog = [
   ['values_in_person', 'Valores - Presencial'], ['available_times', 'Horários disponíveis'],
   ['appointment_confirmation', 'Confirmação de agendamento'], ['reminder', 'Lembrete'],
   ['payment', 'Pagamento'], ['invoice_data', 'Solicitar dados para NF'], ['invoice_issued', 'NF emitida'],
-  ['reschedule', 'Reagendamento'], ['cancellation', 'Cancelamento'], ['return_offer', 'Retorno'],
+  ['reschedule', 'Reagendamento'], ['cancellation', 'Cancelamento'],
+  ['return_confirmation', 'Retorno agendado'], ['return_offer', 'Retorno'],
 ]
 
 function initials(name = '') {
@@ -375,11 +376,17 @@ export default function App() {
     })
   }
 
-  function startReturn(days) {
+  function startReturn() {
     const appointment = appointmentModal
+    if (!appointment?.id) return
+
     setAvailability({
       mode: 'pick',
-      initial: { from: addDays(appointment.appointment_date, days), type: 'followup', modality: appointment.modality },
+      initial: {
+        from: appointment.appointment_date || todayISO(),
+        type: 'followup',
+        modality: appointment.modality || 'online',
+      },
       context: { kind: 'return', appointment },
     })
   }
@@ -394,12 +401,12 @@ export default function App() {
         await api.post(`/api/professionals/${professionalId}/appointments`, {
           patient_id: context.appointment.patient_id,
           appointment_date: slot.date, start_time: slot.start_time, end_time: slot.end_time,
-          appointment_type: 'followup', modality: context.appointment.modality,
+          appointment_type: 'followup', modality: slot.modality || context.appointment.modality,
           status: 'awaiting_confirmation', duration_minutes: slot.duration_minutes,
         })
         setAppointmentModal(null); notify('Retorno agendado.')
       } else if (context?.kind === 'new') {
-        setAppointmentModal({ initial: { ...context.draft, appointment_date: slot.date, start_time: slot.start_time, duration_minutes: slot.duration_minutes } })
+        setAppointmentModal({ initial: { ...context.draft, appointment_type: slot.appointment_type || context.draft.appointment_type, modality: slot.modality || context.draft.modality, appointment_date: slot.date, start_time: slot.start_time, duration_minutes: slot.duration_minutes } })
       }
       setAvailability(null)
       await loadWorkspace(professionalId)
@@ -582,7 +589,7 @@ export default function App() {
         )}
         {professional && activeNav === 'Início' && <HomeScreen professional={professional} todayAppointments={todayAppointments} pendingConfirmations={pendingConfirmations} pendingPayments={pendingPayments} pendingInvoices={pendingInvoices} onOpenAppointment={setAppointmentModal} onAgenda={() => setActiveNav('Agenda')} onFind={() => setAvailability({ mode: 'pick', initial: { from: todayISO(), type: 'first', modality: 'online' }, context: { kind: 'new', draft: { appointment_type: 'first', modality: 'online' } } })} onSettings={() => setActiveNav('Configurações')} />}
         {professional && activeNav === 'Agenda' && <AgendaScreen date={calendarDate} setDate={setCalendarDate} view={calendarView} setView={setCalendarView} appointments={appointments} blocks={blocks} onAppointment={setAppointmentModal} onNew={(date) => setAppointmentModal({ initial: { appointment_date: date } })} onBlock={(date, block = null) => setBlockModal({ date, block })} />}
-        {professional && activeNav === 'Pacientes' && <PatientsScreen patients={patients} search={search} setSearch={setSearch} appointments={appointments} onOpen={openPatient} onNew={() => openPatient()} onWhatsApp={whatsappPatient} onTimes={sendAvailableTimes} onSchedule={(patient) => setAppointmentModal({ initial: { patient_id: patient.id, appointment_date: todayISO(), modality: patient.preferred_modality || 'online' } })} />}
+        {professional && activeNav === 'Pacientes' && <PatientsScreen patients={patients} search={search} setSearch={setSearch} appointments={appointments} professional={professional} messages={messages} defaults={defaultMessages} onOpen={openPatient} onNew={() => openPatient()} onTimes={sendAvailableTimes} onSchedule={(patient) => setAppointmentModal({ initial: { patient_id: patient.id, appointment_date: todayISO(), modality: patient.preferred_modality || 'online' } })} onError={setError} />}
         {professional && activeNav === 'Pendências' && <PendingScreen confirmations={pendingConfirmations} payments={pendingPayments} invoices={pendingInvoices} onOpen={setAppointmentModal} onWhatsApp={whatsappAppointment} onInvoice={setInvoiceModal} />}
         {professional && activeNav === 'Mensagens' && <MessagesScreen messages={messages} defaults={defaultMessages} professional={professional} onSave={saveMessage} onReset={resetMessage} />}
         {professional && activeNav === 'Configurações' && <SettingsScreen professional={professional} session={session} rules={rules} blocks={blocks} audit={audit} passkeys={passkeys} passkeyBusy={passkeyBusy} onEnablePasskey={enablePasskey} onRemovePasskey={removePasskey} onEdit={() => setProfessionalModal(professional)} onSaveRules={saveRules} onBlock={() => setBlockModal({ date: todayISO(), block: null })} onEditBlock={(block) => setBlockModal({ date: block.block_date, block })} onDeleteBlock={deleteBlock} />}
@@ -766,35 +773,379 @@ function AgendaScreen({ date, setDate, view, setView, appointments, blocks, onAp
     const endDate = b.end_date || b.block_date
     return b.block_date <= ranges[1] && endDate >= ranges[0]
   })
-  function move(dir) { setDate(view === 'day' ? addDays(date, dir) : view === 'week' ? addDays(date, dir * 7) : addDays(startOfMonth(date), dir > 0 ? 35 : -7)) }
+
+  function move(dir) {
+    if (view === 'day') {
+      setDate(addDays(date, dir))
+      return
+    }
+
+    if (view === 'week') {
+      setDate(addDays(date, dir * 7))
+      return
+    }
+
+    setDate(
+      dir > 0
+        ? addDays(endOfMonth(date), 1)
+        : startOfMonth(addDays(startOfMonth(date), -1)),
+    )
+  }
+
+  const title = view === 'day'
+    ? formatLongDate(date)
+    : view === 'week'
+      ? `${formatDate(ranges[0], { year: false })} a ${formatDate(ranges[1])}`
+      : new Intl.DateTimeFormat('pt-BR', { month: 'long', year: 'numeric' }).format(parseISODate(date))
+
   return <>
-    <section className="page-head compact"><div><span className="eyebrow">Agenda</span><h1>{view === 'day' ? formatLongDate(date) : view === 'week' ? `${formatDate(ranges[0])} a ${formatDate(ranges[1])}` : new Intl.DateTimeFormat('pt-BR', { month: 'long', year: 'numeric' }).format(parseISODate(date))}</h1></div><div className="toolbar"><button className="icon-button" onClick={() => move(-1)}><ChevronLeft size={18} /></button><button className="ghost-button" onClick={() => setDate(todayISO())}>Hoje</button><button className="icon-button" onClick={() => move(1)}><ChevronRight size={18} /></button><div className="segmented">{[['day','Dia'],['week','Semana'],['month','Mês']].map(([k,l]) => <button key={k} className={view===k?'active':''} onClick={() => setView(k)}>{l}</button>)}</div><button className="ghost-button" onClick={() => onBlock(date)}><Ban size={16}/> Bloquear</button><button className="primary-button" onClick={() => onNew(date)}><Plus size={17}/> Consulta</button></div></section>
+    <section className="page-head compact agenda-screen-head">
+      <div>
+        <span className="eyebrow">Agenda</span>
+        <h1>{title}</h1>
+      </div>
+
+      <div className="agenda-toolbar">
+        <div className="agenda-nav-row">
+          <button className="icon-button" onClick={() => move(-1)} aria-label="Anterior"><ChevronLeft size={18} /></button>
+          <button className="ghost-button" onClick={() => setDate(todayISO())}>Hoje</button>
+          <button className="icon-button" onClick={() => move(1)} aria-label="Próximo"><ChevronRight size={18} /></button>
+
+          <div className="segmented">
+            {[['day','Dia'],['week','Semana'],['month','Mês']].map(([key,label]) => (
+              <button key={key} className={view === key ? 'active' : ''} onClick={() => setView(key)}>{label}</button>
+            ))}
+          </div>
+        </div>
+
+        <div className="agenda-action-row">
+          <button className="ghost-button" onClick={() => onBlock(date)}><Ban size={16}/> Bloquear</button>
+          <button className="primary-button" onClick={() => onNew(date)}><Plus size={17}/> Consulta</button>
+        </div>
+      </div>
+    </section>
+
     {view === 'day' && <DayView date={date} appointments={visibleAppointments} blocks={visibleBlocks} onAppointment={onAppointment} onNew={onNew} onBlock={onBlock} />}
     {view === 'week' && <WeekView date={date} appointments={visibleAppointments} blocks={visibleBlocks} onAppointment={onAppointment} onNew={onNew} onBlock={onBlock} />}
-    {view === 'month' && <MonthView date={date} appointments={visibleAppointments} blocks={visibleBlocks} onAppointment={onAppointment} onNew={onNew} onBlock={onBlock} />}
+    {view === 'month' && <MonthView date={date} setDate={setDate} appointments={visibleAppointments} blocks={visibleBlocks} onAppointment={onAppointment} onNew={onNew} onBlock={onBlock} />}
   </>
 }
 
 function DayView({ date, appointments, blocks, onAppointment, onNew, onBlock }) {
   const dayBlocks = blocks.filter((b) => blockAppliesToDate(b, date))
-  return <div className="panel"><div className="calendar-day-head"><strong>{formatLongDate(date)}</strong><button className="text-button" onClick={() => dayBlocks.length ? onBlock(date, dayBlocks[0]) : onNew(date)}>{dayBlocks.length ? <><Ban size={16}/> Ver bloqueio</> : <><Plus size={16}/> Adicionar</>}</button></div>{dayBlocks.map((b) => <BlockRow key={`b-${b.id}`} block={b} onOpen={() => onBlock(date, b)} />)}<div className="appointment-list">{sortAppointments(appointments).map((a) => <AppointmentRow key={a.id} item={a} onOpen={() => onAppointment(a)} />)}{!appointments.length && !dayBlocks.length && <div className="empty-state">Dia livre.</div>}</div></div>
+
+  return <div className="panel">
+    <div className="calendar-day-head">
+      <strong>{formatLongDate(date)}</strong>
+      <button className="text-button" onClick={() => onNew(date)}><Plus size={16}/> Adicionar consulta</button>
+    </div>
+
+    {dayBlocks.map((b) => <BlockRow key={`b-${b.id}`} block={b} onOpen={() => onBlock(date, b)} />)}
+
+    <div className="appointment-list">
+      {sortAppointments(appointments).map((a) => <AppointmentRow key={a.id} item={a} onOpen={() => onAppointment(a)} />)}
+      {!appointments.length && !dayBlocks.length && <div className="empty-state">Dia livre.</div>}
+    </div>
+  </div>
 }
 
 function WeekView({ date, appointments, blocks, onAppointment, onNew, onBlock }) {
   const start = startOfWeek(date)
   const days = Array.from({ length: 7 }, (_, i) => addDays(start, i))
-  return <div className="week-grid">{days.map((day) => { const dayBlocks = blocks.filter((b) => blockAppliesToDate(b, day)); const dayAppts = sortAppointments(appointments.filter((a) => a.appointment_date === day)); return <div className={`week-column ${day===todayISO()?'today':''}`} key={day}><button className="week-head" onClick={() => dayBlocks.length ? onBlock(day, dayBlocks[0]) : onNew(day)}><span>{weekdayShort(day)}</span><strong>{parseISODate(day).getDate()}</strong></button>{dayBlocks.map((b)=><button type="button" className="mini-block" key={`b-${b.id}`} onClick={()=>onBlock(day,b)}><Ban size={13}/>{b.title}</button>)}{dayAppts.map((a)=><button key={a.id} className={`mini-appointment ${a.status}`} onClick={()=>onAppointment(a)}><strong>{a.start_time}</strong><span>{a.patient_name}</span><small>{a.modality==='online'?'Online':'Presencial'}</small></button>)}{!dayBlocks.length&&!dayAppts.length&&<div className="week-empty">Livre</div>}</div>})}</div>
+
+  return <div className="agenda-week-grid">
+    {days.map((day) => {
+      const dayBlocks = blocks.filter((b) => blockAppliesToDate(b, day))
+      const dayAppointments = sortAppointments(appointments.filter((a) => a.appointment_date === day))
+
+      return <section className={`agenda-week-card ${day === todayISO() ? 'today' : ''}`} key={day}>
+        <div className="agenda-week-card-head">
+          <button type="button" className="agenda-week-date" onClick={() => onNew(day)}>
+            <span>{weekdayShort(day)}</span>
+            <strong>{parseISODate(day).getDate()}</strong>
+          </button>
+
+          <button type="button" className="agenda-day-add" onClick={() => onNew(day)} aria-label={`Adicionar consulta em ${formatDate(day)}`}>
+            <Plus size={16}/>
+          </button>
+        </div>
+
+        <div className="agenda-week-items">
+          {dayBlocks.map((b) => (
+            <button type="button" className="agenda-mini-block" key={`b-${b.id}`} onClick={() => onBlock(day, b)}>
+              <Ban size={13}/><span>{b.title || 'Indisponível'}</span>
+            </button>
+          ))}
+
+          {dayAppointments.map((a) => (
+            <button type="button" key={a.id} className={`agenda-mini-appointment ${a.status || ''}`} onClick={() => onAppointment(a)}>
+              <strong>{a.start_time}</strong>
+              <span>{a.patient_name}</span>
+              <small>{a.modality === 'online' ? 'Online' : 'Presencial'}</small>
+            </button>
+          ))}
+
+          {!dayBlocks.length && !dayAppointments.length && <div className="agenda-week-free">Livre</div>}
+        </div>
+      </section>
+    })}
+  </div>
 }
 
-function MonthView({ date, appointments, blocks, onAppointment, onNew, onBlock }) {
-  const days = monthGrid(date); const currentMonth = parseISODate(date).getMonth()
-  return <div className="month-grid">{['Seg','Ter','Qua','Qui','Sex','Sáb','Dom'].map((d)=><div className="month-weekday" key={d}>{d}</div>)}{days.map((day)=>{const dayAppts=appointments.filter((a)=>a.appointment_date===day);const dayBlocks=blocks.filter((b)=>blockAppliesToDate(b,day));return <div className={`month-cell ${parseISODate(day).getMonth()!==currentMonth?'muted-cell':''} ${day===todayISO()?'today':''}`} key={day}><button className="month-date" onClick={()=>dayBlocks.length ? onBlock(day,dayBlocks[0]) : onNew(day)}>{parseISODate(day).getDate()}</button>{dayBlocks.slice(0,2).map((b)=><button type="button" className="month-block" key={`b-${b.id}`} onClick={()=>onBlock(day,b)}>{b.title}</button>)}{dayBlocks.length>2&&<small>+{dayBlocks.length-2} bloqueios</small>}{dayAppts.slice(0,3).map((a)=><button className="month-appt" key={a.id} onClick={()=>onAppointment(a)}>{a.start_time} {a.patient_name}</button>)}{dayAppts.length>3&&<small>+{dayAppts.length-3} consultas</small>}</div>})}</div>
+function MonthView({ date, setDate, appointments, blocks, onAppointment, onNew, onBlock }) {
+  const days = monthGrid(date)
+  const currentMonth = parseISODate(date).getMonth()
+  const [selectedDay, setSelectedDay] = useState(date)
+
+  useEffect(() => setSelectedDay(date), [date])
+
+  const selectedAppointments = useMemo(
+    () => sortAppointments(appointments.filter((a) => a.appointment_date === selectedDay)),
+    [appointments, selectedDay],
+  )
+  const selectedBlocks = useMemo(
+    () => blocks.filter((b) => blockAppliesToDate(b, selectedDay)),
+    [blocks, selectedDay],
+  )
+
+  function chooseDay(day) {
+    setSelectedDay(day)
+    setDate(day)
+  }
+
+  return <div className="agenda-month-wrap">
+    <div className="agenda-month-grid">
+      {['Seg','Ter','Qua','Qui','Sex','Sáb','Dom'].map((label) => <div className="agenda-month-weekday" key={label}>{label}</div>)}
+
+      {days.map((day) => {
+        const dayAppointments = appointments.filter((a) => a.appointment_date === day)
+        const dayBlocks = blocks.filter((b) => blockAppliesToDate(b, day))
+        const muted = parseISODate(day).getMonth() !== currentMonth
+
+        return <button
+          type="button"
+          key={day}
+          className={[
+            'agenda-month-cell',
+            muted ? 'muted-cell' : '',
+            day === todayISO() ? 'today' : '',
+            day === selectedDay ? 'selected' : '',
+          ].filter(Boolean).join(' ')}
+          onClick={() => chooseDay(day)}
+        >
+          <strong>{parseISODate(day).getDate()}</strong>
+
+          <div className="agenda-month-markers">
+            {dayAppointments.length > 0 && <span className="agenda-month-count appointment">{dayAppointments.length}</span>}
+            {dayBlocks.length > 0 && <span className="agenda-month-count block"><Ban size={10}/>{dayBlocks.length}</span>}
+          </div>
+        </button>
+      })}
+    </div>
+
+    <section className="panel agenda-month-detail">
+      <div className="agenda-month-detail-head">
+        <div>
+          <span className="eyebrow">Dia selecionado</span>
+          <h2>{formatLongDate(selectedDay)}</h2>
+        </div>
+
+        <div className="agenda-month-detail-actions">
+          <button className="ghost-button" onClick={() => onBlock(selectedDay)}><Ban size={15}/> Bloquear</button>
+          <button className="primary-button" onClick={() => onNew(selectedDay)}><Plus size={16}/> Consulta</button>
+        </div>
+      </div>
+
+      <div className="agenda-month-detail-list">
+        {selectedBlocks.map((b) => (
+          <button type="button" className="agenda-mini-block" key={`detail-b-${b.id}`} onClick={() => onBlock(selectedDay, b)}>
+            <Ban size={13}/><span>{b.title || 'Indisponível'}</span>
+          </button>
+        ))}
+
+        {selectedAppointments.map((a) => (
+          <button type="button" key={`detail-a-${a.id}`} className={`agenda-mini-appointment ${a.status || ''}`} onClick={() => onAppointment(a)}>
+            <strong>{a.start_time}</strong>
+            <span>{a.patient_name}</span>
+            <small>{a.modality === 'online' ? 'Online' : 'Presencial'}</small>
+          </button>
+        ))}
+
+        {!selectedBlocks.length && !selectedAppointments.length && <div className="empty-state">Nenhum compromisso neste dia.</div>}
+      </div>
+    </section>
+  </div>
 }
 
-function PatientsScreen({ patients, search, setSearch, appointments, onOpen, onNew, onWhatsApp, onTimes, onSchedule }) {
-  const filtered = patients.filter((p) => `${p.full_name} ${p.whatsapp} ${p.email||''}`.toLowerCase().includes(search.toLowerCase()))
-  return <><section className="page-head compact"><div><span className="eyebrow">Cadastros</span><h1>Pacientes</h1><p>Somente dados administrativos.</p></div><button className="primary-button" onClick={onNew}><UserRoundPlus size={18}/> Novo paciente</button></section><div className="search-box"><Search size={17}/><input placeholder="Buscar por nome, WhatsApp ou e-mail" value={search} onChange={(e)=>setSearch(e.target.value)}/></div><div className="table-card"><div className="table-head"><span>Paciente</span><span>Preferência</span><span>Próxima consulta</span><span>Ações</span></div>{filtered.map((p)=>{const next=sortAppointments(appointments.filter((a)=>a.patient_id===p.id&&a.appointment_date>=todayISO()&&!['cancelled'].includes(a.status)))[0];return <div className="table-row" key={p.id}><button className="patient-name" onClick={()=>onOpen(p)}><strong>{p.full_name}</strong><small>{p.whatsapp}</small></button><span>{p.preferred_modality==='online'?'Online':p.preferred_modality==='in_person'?'Presencial':'—'}</span><span>{next?`${formatDate(next.appointment_date)} · ${next.start_time}`:'—'}</span><div className="row-actions"><button onClick={()=>onWhatsApp(p)}>WhatsApp</button><button onClick={()=>onTimes(p)}>Horários</button><button onClick={()=>onSchedule(p)}>Agendar</button></div></div>})}{!filtered.length&&<div className="empty-state">Nenhum paciente encontrado.</div>}</div></>
+function PatientsScreen({ patients, search, setSearch, appointments, professional, messages, defaults, onOpen, onNew, onTimes, onSchedule, onError }) {
+  const [messagePatient, setMessagePatient] = useState(null)
+
+  const filtered = patients.filter((p) => `${p.full_name} ${p.whatsapp} ${p.email || ''}`.toLowerCase().includes(search.toLowerCase()))
+  const customMap = useMemo(() => Object.fromEntries((messages || []).map((m) => [m.template_key, m])), [messages])
+  const defaultMap = useMemo(() => Object.fromEntries((defaults || []).map((m) => [m.template_key, m])), [defaults])
+
+  const fallbackTemplates = {
+    first_contact: 'Olá, {nome}! Tudo bem? Como posso te ajudar?',
+    online_info: 'Olá, {nome}! O atendimento online com {profissional} é realizado por videochamada.',
+    in_person_info: 'Olá, {nome}! O atendimento presencial com {profissional} é realizado no endereço informado pela equipe.',
+    values_online: 'Olá, {nome}! Posso te passar os valores do atendimento online com {profissional}.',
+    values_in_person: 'Olá, {nome}! Posso te passar os valores do atendimento presencial com {profissional}.',
+    appointment_confirmation: 'Olá, {nome}! Seu agendamento com {profissional} está confirmado.\\n\\n📅 {data}\\n🕐 {hora}\\n📍 {modalidade}',
+    return_confirmation: 'Olá, {nome}! Seu retorno com {profissional} ficou agendado. 🤍\\n\\n📅 {data}\\n🕐 {hora}\\n📍 {modalidade}',
+    reminder: 'Olá, {nome}! Passando para lembrar da sua consulta com {profissional}.\\n\\n📅 {data}\\n🕐 {hora}\\n📍 {modalidade}',
+    payment: 'Olá, {nome}! Para o pagamento da consulta com {profissional}, você pode realizar via PIX.\\n\\nValor: {valor}\\nChave PIX: {pix}',
+    invoice_data: 'Olá, {nome}! Para emissão da nota fiscal, preciso dos seus dados fiscais.',
+    invoice_issued: 'Olá, {nome}! Sua nota fiscal já foi emitida.',
+    reschedule: 'Olá, {nome}! Sobre seu agendamento de {data} às {hora}, posso te ajudar com o reagendamento.',
+    cancellation: 'Olá, {nome}! Estou entrando em contato sobre seu agendamento de {data} às {hora}.',
+    return_offer: 'Olá, {nome}! Quando quiser, posso verificar os horários disponíveis para seu retorno com {profissional}.',
+  }
+
+  function templateFor(key) {
+    return customMap[key]?.content || defaultMap[key]?.content || fallbackTemplates[key] || ''
+  }
+
+  function futureAppointments(patient) {
+    return sortAppointments(appointments.filter((a) =>
+      Number(a.patient_id) === Number(patient.id) &&
+      a.appointment_date >= todayISO() &&
+      !['cancelled', 'completed', 'no_show'].includes(a.status)
+    ))
+  }
+
+  function sendPatientMessage(option) {
+    if (!messagePatient) return
+
+    if (option.special === 'times') {
+      const patient = messagePatient
+      setMessagePatient(null)
+      onTimes(patient)
+      return
+    }
+
+    const future = futureAppointments(messagePatient)
+    const next = future[0] || null
+    const nextReturn = future.find((a) => a.appointment_type === 'followup') || null
+    const appointment = option.requires === 'return' ? nextReturn : next
+
+    if (option.requires && !appointment) return
+
+    const vars = {
+      nome: messagePatient.full_name,
+      profissional: professional?.name || '',
+      data: appointment ? formatDate(appointment.appointment_date) : '',
+      hora: appointment?.start_time || '',
+      modalidade: appointment ? (appointment.modality === 'online' ? 'Online' : 'Presencial') : '',
+      valor: appointment ? formatBRL(appointment.price) : '',
+      pix: professional?.pix_key || '',
+      link_consulta: professional?.online_link || '',
+    }
+
+    try {
+      openWhatsApp(messagePatient.whatsapp, renderTemplate(templateFor(option.key), vars))
+      setMessagePatient(null)
+    } catch (e) {
+      onError?.(e.message || 'Não foi possível abrir o WhatsApp.')
+    }
+  }
+
+  return <>
+    <section className="page-head compact">
+      <div><span className="eyebrow">Cadastros</span><h1>Pacientes</h1><p>Somente dados administrativos.</p></div>
+      <button className="primary-button" onClick={onNew}><UserRoundPlus size={18}/> Novo paciente</button>
+    </section>
+
+    <div className="search-box"><Search size={17}/><input placeholder="Buscar por nome, WhatsApp ou e-mail" value={search} onChange={(e) => setSearch(e.target.value)}/></div>
+
+    <div className="table-card">
+      <div className="table-head"><span>Paciente</span><span>Preferência</span><span>Próxima consulta</span><span>Ações</span></div>
+
+      {filtered.map((p) => {
+        const next = futureAppointments(p)[0]
+
+        return <div className="table-row" key={p.id}>
+          <button className="patient-name" onClick={() => onOpen(p)}><strong>{p.full_name}</strong><small>{p.whatsapp}</small></button>
+          <span>{p.preferred_modality === 'online' ? 'Online' : p.preferred_modality === 'in_person' ? 'Presencial' : '—'}</span>
+          <span>{next ? `${formatDate(next.appointment_date)} · ${next.start_time}` : '—'}</span>
+
+          <div className="row-actions">
+            <button className="patient-whatsapp-button" onClick={() => setMessagePatient(p)}><MessageCircle size={14}/> WhatsApp</button>
+            <button onClick={() => onTimes(p)}>Horários</button>
+            <button onClick={() => onSchedule(p)}>Agendar</button>
+          </div>
+        </div>
+      })}
+
+      {!filtered.length && <div className="empty-state">Nenhum paciente encontrado.</div>}
+    </div>
+
+    {messagePatient && <PatientMessageModal
+      patient={messagePatient}
+      future={futureAppointments(messagePatient)}
+      templateFor={templateFor}
+      onClose={() => setMessagePatient(null)}
+      onSend={sendPatientMessage}
+    />}
+  </>
 }
+
+function PatientMessageModal({ patient, future, templateFor, onClose, onSend }) {
+  const next = future[0] || null
+  const nextReturn = future.find((a) => a.appointment_type === 'followup') || null
+
+  const options = [
+    { key: 'first_contact', title: 'Primeiro contato' },
+    { key: 'online_info', title: 'Informações do online' },
+    { key: 'in_person_info', title: 'Informações do presencial' },
+    { key: 'values_online', title: 'Valores do online' },
+    { key: 'values_in_person', title: 'Valores do presencial' },
+    { key: 'available_times', title: 'Horários disponíveis', special: 'times' },
+    { key: 'appointment_confirmation', title: 'Agendamento confirmado', requires: 'appointment' },
+    { key: 'return_confirmation', title: 'Retorno agendado', requires: 'return' },
+    { key: 'reminder', title: 'Lembrete da consulta', requires: 'appointment' },
+    { key: 'payment', title: 'Pagamento', requires: 'appointment' },
+    { key: 'invoice_data', title: 'Solicitar dados para NF', requires: 'appointment' },
+    { key: 'invoice_issued', title: 'Nota fiscal emitida', requires: 'appointment' },
+    { key: 'reschedule', title: 'Reagendamento', requires: 'appointment' },
+    { key: 'cancellation', title: 'Cancelamento', requires: 'appointment' },
+    { key: 'return_offer', title: 'Oferecer retorno' },
+  ]
+
+  const availableOptions = options.filter((option) => {
+    if (option.requires === 'appointment') return Boolean(next)
+    if (option.requires === 'return') return Boolean(nextReturn)
+    return true
+  })
+
+  return <Modal title={`WhatsApp · ${patient.full_name}`} subtitle="Escolha qual mensagem você quer enviar." onClose={onClose} wide>
+    {next && <div className="patient-message-next">
+      <CalendarRange size={18}/>
+      <div>
+        <strong>Próximo agendamento</strong>
+        <span>{formatDate(next.appointment_date)} às {next.start_time} · {next.appointment_type === 'followup' ? 'Retorno' : 'Primeira consulta'}</span>
+      </div>
+    </div>}
+
+    <div className="patient-message-grid">
+      {availableOptions.map((option) => (
+        <button type="button" className={option.key === 'return_confirmation' ? 'patient-message-option featured' : 'patient-message-option'} key={option.key} onClick={() => onSend(option)}>
+          <MessageCircle size={16}/>
+          <div>
+            <strong>{option.title}</strong>
+            <small>
+              {option.special === 'times'
+                ? 'Escolher os horários antes de abrir o WhatsApp'
+                : option.key === 'return_confirmation'
+                  ? `${formatDate(nextReturn.appointment_date)} às ${nextReturn.start_time}`
+                  : templateFor(option.key).slice(0, 80)}
+            </small>
+          </div>
+        </button>
+      ))}
+    </div>
+  </Modal>
+}
+
 
 function PendingScreen({ confirmations, payments, invoices, onOpen, onWhatsApp, onInvoice }) {
   return <><section className="page-head compact"><div><span className="eyebrow">Controle diário</span><h1>Pendências</h1><p>Resolveu, a pendência some automaticamente.</p></div></section><div className="pending-grid"><PendingGroup title="Confirmações" icon={MessageCircle} items={confirmations} empty="Nenhuma confirmação pendente." render={(a)=><PendingItem key={a.id} item={a} onOpen={()=>onOpen(a)} action={<button onClick={()=>onWhatsApp(a)}>WhatsApp</button>}/>} /><PendingGroup title="Pagamentos" icon={WalletCards} items={payments} empty="Nenhum pagamento pendente." render={(a)=><PendingItem key={a.id} item={a} onOpen={()=>onOpen(a)} action={<button onClick={()=>onOpen(a)}>Abrir</button>}/>} /><PendingGroup title="Notas fiscais" icon={FileText} items={invoices} empty="Nenhuma NF pendente." render={(a)=><PendingItem key={a.id} item={a} onOpen={()=>onOpen(a)} action={<button onClick={()=>onInvoice(a)}>NF</button>}/>} /></div></>
