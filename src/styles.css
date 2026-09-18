@@ -1035,3 +1035,47 @@ textarea:disabled {
   .open-workspace { grid-column: 2; }
   .message-card-actions { justify-content: flex-start; }
 }
+
+
+/* Consolidated workspace navigation */
+.hero-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.workspace-settings-cta {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+@media (max-width: 820px) {
+  .hero-actions {
+    width: 100%;
+    justify-content: flex-start;
+  }
+
+  .workspace-settings-cta {
+    min-height: 36px;
+    padding: 0 10px;
+    font-size: 12px;
+  }
+
+  .mobile-nav {
+    gap: 1px;
+  }
+
+  .mobile-nav button {
+    min-width: 0;
+    padding-left: 1px;
+    padding-right: 1px;
+  }
+
+  .mobile-nav span {
+    font-size: 7px;
+    white-space: nowrap;
+  }
+}
