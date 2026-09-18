@@ -13,9 +13,11 @@ export default function AppointmentModal({
   appointment, professional, patients, initial, onClose, onSave, onStatus, onFindTime, onWhatsApp, onReturn,
 }) {
   const [form, setForm] = useState(emptyForm)
+  const [customReturnDate, setCustomReturnDate] = useState('')
   const editing = Boolean(appointment?.id)
 
   useEffect(() => {
+    setCustomReturnDate('')
     if (appointment) {
       setForm({
         patient_id: appointment.patient_id || '',
@@ -183,25 +185,67 @@ export default function AppointmentModal({
             <button onClick={() => onStatus('no_show')}>Faltou</button>
             <button onClick={() => onStatus('cancelled')} className="danger-soft">Cancelar consulta</button>
           </div>
-          {(appointment.status === 'completed' || form.status === 'completed') && (
-            <div className="return-row">
-              <span>Agendar retorno:</span>
-              {[15, 30, 45, 60].map((days) => {
-                const target = addDays(appointment.appointment_date, days)
-                return (
+          <div className="return-row">
+            <span>Agendar retorno:</span>
+
+            {[15, 30, 45, 60].map((days) => {
+              const target = addDays(appointment.appointment_date, days)
+              return (
+                <button
+                  type="button"
+                  key={days}
+                  className={days === 30 ? 'return-primary' : ''}
+                  onClick={() => onReturn?.(days)}
+                  title={`Buscar horários a partir de ${formatDate(target)}`}
+                >
+                  <strong>{days} dias</strong>
+                  <small>{formatDate(target)}</small>
+                </button>
+              )
+            })}
+
+            <button
+              type="button"
+              className={customReturnDate ? 'return-primary' : ''}
+              onClick={() => setCustomReturnDate((value) => value ? '' : addDays(appointment.appointment_date, 30))}
+            >
+              <strong>Outra data</strong>
+              <small>{customReturnDate ? formatDate(customReturnDate) : 'Escolher'}</small>
+            </button>
+
+            {customReturnDate && (
+              <div className="form-grid inset span-2" style={{ width: '100%', marginTop: 8 }}>
+                <label className="field">
+                  <span>Data desejada para o retorno</span>
+                  <input
+                    type="date"
+                    min={addDays(appointment.appointment_date, 1)}
+                    value={customReturnDate}
+                    onChange={(e) => setCustomReturnDate(e.target.value)}
+                  />
+                </label>
+
+                <div className="field" style={{ justifyContent: 'end' }}>
+                  <span>&nbsp;</span>
                   <button
-                    key={days}
-                    className={days === 30 ? 'return-primary' : ''}
-                    onClick={() => onReturn?.(days)}
-                    title={`Buscar horários a partir de ${formatDate(target)}`}
+                    type="button"
+                    className="secondary-button fit"
+                    disabled={!customReturnDate}
+                    onClick={() => {
+                      const [ay, am, ad] = appointment.appointment_date.split('-').map(Number)
+                      const [ty, tm, td] = customReturnDate.split('-').map(Number)
+                      const days = Math.round(
+                        (Date.UTC(ty, tm - 1, td) - Date.UTC(ay, am - 1, ad)) / 86400000
+                      )
+                      if (days > 0) onReturn?.(days)
+                    }}
                   >
-                    <strong>+{days}</strong>
-                    <small>{formatDate(target)}</small>
+                    Buscar horários
                   </button>
-                )
-              })}
-            </div>
-          )}
+                </div>
+              </div>
+            )}
+          </div>
         </div>
       )}
     </Modal>
