@@ -1079,3 +1079,367 @@ textarea:disabled {
     white-space: nowrap;
   }
 }
+
+/* =========================================================
+   RETORNO + AGENDA MOBILE + WHATSAPP DO PACIENTE
+   ========================================================= */
+
+.return-shortcuts {
+  margin: 2px 0 16px;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  background: #faf9f6;
+}
+.return-shortcuts-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 9px;
+}
+.return-shortcuts-head strong { font-size: 12px; }
+.return-shortcuts-head span { color: var(--muted); font-size: 10px; }
+
+.return-shortcut-buttons {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 7px;
+}
+.return-shortcut {
+  min-height: 54px;
+  display: grid;
+  place-items: center;
+  align-content: center;
+  gap: 2px;
+  padding: 7px;
+  border: 1px solid var(--border);
+  border-radius: 11px;
+  background: #fff;
+  color: #4d5651;
+}
+.return-shortcut strong { font-size: 11px; }
+.return-shortcut small { font-size: 9px; color: var(--muted); }
+.return-shortcut.primary {
+  border-color: var(--brand-primary);
+  box-shadow: inset 0 0 0 1px var(--brand-primary);
+  background: color-mix(in srgb, var(--brand-secondary) 55%, white);
+}
+
+.agenda-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 9px;
+  flex-wrap: wrap;
+}
+.agenda-nav-row,
+.agenda-action-row {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.agenda-week-grid {
+  display: grid;
+  grid-template-columns: repeat(7, minmax(0, 1fr));
+  gap: 8px;
+}
+.agenda-week-card {
+  min-width: 0;
+  padding: 9px;
+  border: 1px solid var(--border);
+  border-radius: 15px;
+  background: rgba(255,255,255,.82);
+}
+.agenda-week-card.today {
+  border-color: var(--brand-primary);
+  box-shadow: inset 0 0 0 1px var(--brand-primary);
+}
+.agenda-week-card-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 7px;
+  margin-bottom: 8px;
+}
+.agenda-week-date {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  padding: 0;
+  background: transparent;
+  color: #4f5753;
+}
+.agenda-week-date span { font-size: 10px; text-transform: capitalize; }
+.agenda-week-date strong { font-size: 20px; }
+.agenda-day-add {
+  width: 29px;
+  height: 29px;
+  display: grid;
+  place-items: center;
+  border-radius: 9px;
+  background: #f1efea;
+  color: #59615d;
+}
+.agenda-week-items,
+.agenda-month-detail-list {
+  display: grid;
+  gap: 6px;
+}
+.agenda-mini-appointment {
+  width: 100%;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  column-gap: 7px;
+  row-gap: 1px;
+  padding: 8px 9px;
+  text-align: left;
+  border-left: 3px solid var(--brand-primary);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--brand-secondary) 58%, white);
+  color: #35403a;
+}
+.agenda-mini-appointment > strong {
+  grid-row: 1 / 3;
+  align-self: center;
+  font-size: 11px;
+}
+.agenda-mini-appointment > span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 11px;
+  font-weight: 750;
+}
+.agenda-mini-appointment > small { color: #69706c; font-size: 9px; }
+.agenda-mini-appointment.cancelled { opacity: .48; }
+
+.agenda-mini-block {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 7px 8px;
+  border-radius: 9px;
+  background: #ece8e1;
+  color: #655f59;
+  text-align: left;
+  font-size: 10px;
+}
+.agenda-mini-block span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.agenda-week-free { padding: 10px 2px; color: #a5aaa7; font-size: 10px; }
+
+.agenda-month-wrap {
+  display: grid;
+  gap: 12px;
+}
+.agenda-month-grid {
+  display: grid;
+  grid-template-columns: repeat(7, minmax(0, 1fr));
+  gap: 1px;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  background: var(--border);
+}
+.agenda-month-weekday {
+  padding: 7px 2px;
+  background: #eeebe5;
+  color: #727873;
+  text-align: center;
+  font-size: 9px;
+  font-weight: 800;
+}
+.agenda-month-cell {
+  min-width: 0;
+  min-height: 76px;
+  display: grid;
+  align-content: space-between;
+  gap: 4px;
+  padding: 7px;
+  background: #fff;
+  color: #3e4642;
+  text-align: left;
+  border-radius: 0;
+}
+.agenda-month-cell > strong { font-size: 13px; }
+.agenda-month-cell.muted-cell { background: #f7f5f1; color: #adb1ae; }
+.agenda-month-cell.today { box-shadow: inset 0 0 0 2px var(--brand-primary); }
+.agenda-month-cell.selected { background: color-mix(in srgb, var(--brand-secondary) 52%, white); }
+
+.agenda-month-markers {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 3px;
+}
+.agenda-month-count {
+  min-width: 19px;
+  height: 18px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  padding: 0 5px;
+  border-radius: 999px;
+  font-size: 9px;
+  font-weight: 800;
+}
+.agenda-month-count.appointment { background: var(--brand-secondary); color: #435049; }
+.agenda-month-count.block { background: #e9e4dc; color: #6b625b; }
+
+.agenda-month-detail { padding: 14px; }
+.agenda-month-detail-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 10px;
+}
+.agenda-month-detail-head h2 {
+  margin: 3px 0 0;
+  font-size: 18px;
+  text-transform: capitalize;
+}
+.agenda-month-detail-actions { display: flex; gap: 7px; }
+
+.patient-whatsapp-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+.patient-message-next {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 12px;
+  padding: 10px 11px;
+  border-radius: 12px;
+  background: #f5f3ef;
+}
+.patient-message-next > div { display: grid; gap: 2px; }
+.patient-message-next strong { font-size: 11px; }
+.patient-message-next span { color: var(--muted); font-size: 10px; }
+
+.patient-message-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+.patient-message-option {
+  min-width: 0;
+  display: flex;
+  align-items: flex-start;
+  gap: 9px;
+  padding: 11px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: #fff;
+  color: #414a45;
+  text-align: left;
+}
+.patient-message-option.featured {
+  border-color: var(--brand-primary);
+  background: color-mix(in srgb, var(--brand-secondary) 48%, white);
+}
+.patient-message-option > div {
+  min-width: 0;
+  display: grid;
+  gap: 3px;
+}
+.patient-message-option strong { font-size: 11px; }
+.patient-message-option small {
+  display: -webkit-box;
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 9px;
+  line-height: 1.35;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+@media (max-width: 820px) {
+  .agenda-screen-head h1 { font-size: 24px; }
+
+  .agenda-toolbar {
+    justify-content: flex-start;
+    margin-top: 10px;
+  }
+  .agenda-nav-row,
+  .agenda-action-row { width: 100%; }
+
+  .agenda-nav-row .segmented { flex: 1; }
+  .agenda-nav-row .segmented button { flex: 1; }
+
+  .agenda-action-row > button {
+    flex: 1;
+    justify-content: center;
+  }
+
+  .agenda-week-grid {
+    grid-template-columns: 1fr;
+    gap: 7px;
+  }
+  .agenda-week-card { padding: 10px; }
+  .agenda-week-card-head { margin-bottom: 5px; }
+  .agenda-week-items { gap: 5px; }
+  .agenda-week-free { padding: 4px 2px 2px; }
+
+  .agenda-month-cell {
+    min-height: 66px;
+    padding: 5px;
+  }
+  .agenda-month-cell > strong { font-size: 12px; }
+  .agenda-month-count {
+    min-width: 17px;
+    height: 16px;
+    padding: 0 4px;
+    font-size: 8px;
+  }
+
+  .agenda-month-detail-head {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+  .agenda-month-detail-actions { width: 100%; }
+  .agenda-month-detail-actions button {
+    flex: 1;
+    justify-content: center;
+  }
+
+  .return-shortcut-buttons {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .patient-message-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 560px) {
+  .agenda-month-weekday {
+    padding: 6px 0;
+    font-size: 8px;
+  }
+  .agenda-month-cell {
+    min-height: 58px;
+    padding: 4px;
+  }
+  .agenda-month-markers { gap: 2px; }
+
+  .return-shortcuts-head {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 2px;
+  }
+  .return-shortcut-buttons {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .return-shortcut:last-child { grid-column: 1 / -1; }
+}
