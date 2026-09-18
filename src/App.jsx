@@ -366,6 +366,24 @@ export default function App() {
     } catch (e) { setError(e.message) }
   }
 
+  async function deleteAppointment() {
+    if (!appointmentModal?.id) return
+
+    const confirmed = window.confirm(
+      'Excluir este agendamento?\n\nUse esta opção somente para cadastros feitos por engano. O agendamento será removido definitivamente e essa ação não poderá ser desfeita.'
+    )
+    if (!confirmed) return
+
+    try {
+      await api.delete(`/api/appointments/${appointmentModal.id}`)
+      setAppointmentModal(null)
+      await loadWorkspace(professionalId)
+      notify('Agendamento excluído.')
+    } catch (e) {
+      setError(e.message)
+    }
+  }
+
   function openAvailabilityFromAppointment(form) {
     const draft = { ...form }
     const editing = Boolean(appointmentModal?.id)
@@ -610,6 +628,7 @@ export default function App() {
         onFindTime={openAvailabilityFromAppointment}
         onWhatsApp={() => whatsappAppointment(appointmentModal)}
         onReturn={startReturn}
+        onDelete={deleteAppointment}
       />}
       {patientModal && <PatientModal patient={patientModal.id ? patientModal : null} fiscal={patientFiscal} onClose={() => setPatientModal(null)} onSave={savePatient} onArchive={archivePatient} onDelete={deletePatient} />}
       {professionalModal && <ProfessionalModal professional={professionalModal.id ? professionalModal : null} onClose={() => setProfessionalModal(null)} onSave={saveProfessional} />}
