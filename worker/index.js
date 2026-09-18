@@ -889,6 +889,38 @@ export default {
         return json({ ok: true })
       }
 
+      // GLOBAL MESSAGE DEFAULTS --------------------------------------------
+      if (url.pathname === '/api/message-defaults') {
+        if (request.method === 'GET') {
+          const result = await env.DB.prepare(`
+            SELECT template_key, title, content, active
+            FROM message_defaults
+            ORDER BY template_key
+          `).all()
+          return json(result.results || [])
+        }
+
+        if (request.method === 'PUT') {
+          if (session?.role !== 'admin') return error('Somente a administradora pode alterar mensagens padrão.', 403)
+          const data = await bodyJson(request)
+          if (!data.template_key || !data.title) return error('Chave e título são obrigatórios.')
+          await env.DB.prepare(`
+            INSERT INTO message_defaults (template_key, title, content, active, updated_at)
+            VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)
+            ON CONFLICT(template_key) DO UPDATE SET
+              title = excluded.title,
+              content = excluded.content,
+              active = excluded.active,
+              updated_at = CURRENT_TIMESTAMP
+          `).bind(data.template_key, data.title, data.content || '', data.active === false ? 0 : 1).run()
+          return json(await env.DB.prepare(`
+            SELECT template_key, title, content, active
+            FROM message_defaults
+            WHERE template_key = ?
+          `).bind(data.template_key).first())
+        }
+      }
+
       // PROFESSIONALS -------------------------------------------------------
       if (url.pathname === '/api/professionals' && request.method === 'GET') {
         const where = session?.role === 'professional' ? 'WHERE p.id = ? AND p.active = 1' : 'WHERE p.active = 1'
@@ -1615,6 +1647,19 @@ export default {
             WHERE professional_id = ? AND template_key = ?
           `).bind(professionalId, data.template_key).first())
         }
+      }
+
+      const messageItemMatch = url.pathname.match(/^\/api\/professionals\/(\d+)\/messages\/([^/]+)$/)
+      if (messageItemMatch && request.method === 'DELETE') {
+        const professionalId = Number(messageItemMatch[1])
+        if (!canAccessProfessional(session, professionalId)) return error('Sem acesso a este profissional.', 403)
+        const templateKey = decodeURIComponent(messageItemMatch[2])
+        await env.DB.prepare(`
+          DELETE FROM message_templates
+          WHERE professional_id = ? AND template_key = ?
+        `).bind(professionalId, templateKey).run()
+        await audit(env, session, professionalId, 'message_template', null, 'reset', `Mensagem ${templateKey} voltou ao padrão`)
+        return json({ ok: true })
       }
 
       // AVAILABILITY --------------------------------------------------------
