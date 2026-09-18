@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import {
   CalendarDays, ChevronLeft, ChevronRight, Clock3, FileText, Home, MessageCircle,
   Plus, Search, Settings, Stethoscope, UsersRound, WalletCards, XCircle, CheckCircle2,
-  Ban, CalendarRange, UserRoundPlus, Palette, History, LockKeyhole,
+  Ban, CalendarRange, UserRoundPlus, Palette, History, LockKeyhole, Fingerprint,
 } from 'lucide-react'
 import { api } from './lib/api'
 import { applyProfessionalTheme } from './lib/theme'
@@ -11,6 +11,7 @@ import {
   parseISODate, startOfMonth, startOfWeek, todayISO, weekdayShort,
 } from './lib/date'
 import { openWhatsApp, renderTemplate } from './lib/whatsapp'
+import { loginWithPasskey as performPasskeyLogin, passkeySupported, registerPasskey } from './lib/webauthn'
 import Modal from './components/Modal'
 import StatusBadge from './components/StatusBadge'
 import AppointmentModal from './components/AppointmentModal'
@@ -71,6 +72,8 @@ export default function App() {
   const [session, setSession] = useState(null)
   const [setupRequired, setSetupRequired] = useState(false)
   const [authBusy, setAuthBusy] = useState(false)
+  const [passkeyBusy, setPasskeyBusy] = useState(false)
+  const [passkeys, setPasskeys] = useState([])
   const [professionals, setProfessionals] = useState([])
   const [professionalId, setProfessionalId] = useState(null)
   const [activeNav, setActiveNav] = useState('Profissionais')
@@ -127,6 +130,7 @@ export default function App() {
       if (!sessionData?.authenticated) {
         setSession(null)
         setProfessionals([])
+        setPasskeys([])
         setProfessionalId(null)
         return
       }
@@ -134,8 +138,12 @@ export default function App() {
       if (sessionData.role === 'professional' && sessionData.slug && window.location.pathname !== `/${sessionData.slug}`) {
         window.history.replaceState({}, '', `/${sessionData.slug}`)
       }
-      const professionalData = await api.get('/api/professionals')
+      const [professionalData, passkeyData] = await Promise.all([
+        api.get('/api/professionals'),
+        api.get('/api/auth/passkeys').catch(() => []),
+      ])
       setProfessionals(professionalData)
+      setPasskeys(passkeyData)
       if (professionalData.length) {
         setProfessionalId(professionalData[0].id)
         setActiveNav(sessionData.role === 'professional' ? 'Início' : 'Profissionais')
@@ -146,13 +154,44 @@ export default function App() {
     } finally { setLoading(false) }
   }
 
-  async function login(password) {
+  async function login(password, remember = true) {
     setAuthBusy(true); setError('')
     try {
       const slug = window.location.pathname.split('/').filter(Boolean)[0] || 'admin'
-      await api.post('/api/auth/login', { slug, password })
+      await api.post('/api/auth/login', { slug, password, remember })
       await bootstrap()
     } catch (e) { setError(e.message) } finally { setAuthBusy(false) }
+  }
+
+  async function biometricLogin(remember = true) {
+    setAuthBusy(true); setError('')
+    try {
+      const slug = window.location.pathname.split('/').filter(Boolean)[0] || 'admin'
+      await performPasskeyLogin(slug, remember)
+      await bootstrap()
+    } catch (e) {
+      if (e?.name !== 'NotAllowedError') setError(e.message || 'Não foi possível usar a biometria.')
+    } finally { setAuthBusy(false) }
+  }
+
+  async function enablePasskey() {
+    setPasskeyBusy(true); setError('')
+    try {
+      await registerPasskey()
+      setPasskeys(await api.get('/api/auth/passkeys'))
+      notify('Biometria ativada neste aparelho.')
+    } catch (e) {
+      if (e?.name !== 'NotAllowedError') setError(e.message || 'Não foi possível ativar a biometria.')
+    } finally { setPasskeyBusy(false) }
+  }
+
+  async function removePasskey(id) {
+    if (!window.confirm('Remover esta biometria? Este aparelho deixará de entrar por biometria se esta for a credencial usada nele.')) return
+    try {
+      await api.delete(`/api/auth/passkeys/${id}`)
+      setPasskeys(await api.get('/api/auth/passkeys'))
+      notify('Biometria removida.')
+    } catch (e) { setError(e.message) }
   }
 
   async function setupAdmin(name, password) {
@@ -167,6 +206,7 @@ export default function App() {
     try { await api.post('/api/auth/logout', {}) } catch {}
     setSession(null)
     setProfessionals([])
+    setPasskeys([])
     setProfessionalId(null)
     setPatients([]); setAppointments([]); setBlocks([]); setMessages([]); setRules([]); setAudit([])
     setActiveNav('Profissionais')
@@ -227,20 +267,28 @@ export default function App() {
     setPatientModal(patient || {})
   }
 
-  async function savePatient(data) {
+  async function savePatient(data, fiscalData = null) {
     try {
-      if (patientModal?.id) await api.patch(`/api/patients/${patientModal.id}`, data)
-      else await api.post(`/api/professionals/${professionalId}/patients`, data)
-      setPatients(await api.get(`/api/professionals/${professionalId}/patients`))
-      setPatientModal(null); notify('Paciente salvo.')
-    } catch (e) { setError(e.message) }
-  }
+      let saved
+      if (patientModal?.id) {
+        saved = await api.patch(`/api/patients/${patientModal.id}`, data)
+      } else {
+        saved = await api.post(`/api/professionals/${professionalId}/patients`, data)
+      }
 
-  async function saveFiscal(data) {
-    try {
-      const result = await api.put(`/api/patients/${patientModal.id}/fiscal`, data)
-      setPatientFiscal(result); notify('Dados fiscais salvos.')
-    } catch (e) { setError(e.message) }
+      const patientId = saved?.id || patientModal?.id
+      if (patientId && fiscalData) {
+        await api.put(`/api/patients/${patientId}/fiscal`, fiscalData)
+      }
+
+      setPatients(await api.get(`/api/professionals/${professionalId}/patients`))
+      setPatientModal(null)
+      notify('Paciente salvo.')
+      return saved
+    } catch (e) {
+      setError(e.message)
+      throw e
+    }
   }
 
   async function archivePatient() {
@@ -249,6 +297,19 @@ export default function App() {
     await api.patch(`/api/patients/${patientModal.id}`, { archived: 1 })
     setPatients(await api.get(`/api/professionals/${professionalId}/patients`))
     setPatientModal(null); notify('Paciente arquivado.')
+  }
+
+  async function deletePatient() {
+    if (!patientModal?.id) return
+    if (!window.confirm('Excluir este cadastro? Isso só é permitido quando o paciente não possui nenhuma consulta vinculada.')) return
+    try {
+      await api.delete(`/api/patients/${patientModal.id}`)
+      setPatients(await api.get(`/api/professionals/${professionalId}/patients`))
+      setPatientModal(null)
+      notify('Cadastro excluído.')
+    } catch (e) {
+      setError(e.message)
+    }
   }
 
   async function saveAppointment(data) {
@@ -408,7 +469,7 @@ export default function App() {
 
   if (!session?.authenticated) {
     const slug = window.location.pathname.split('/').filter(Boolean)[0] || 'admin'
-    return <LoginScreen slug={slug} setupRequired={setupRequired} busy={authBusy} error={error} onLogin={login} onSetup={setupAdmin} />
+    return <LoginScreen slug={slug} setupRequired={setupRequired} busy={authBusy} error={error} onLogin={login} onPasskey={biometricLogin} onSetup={setupAdmin} />
   }
 
   return (
@@ -454,7 +515,7 @@ export default function App() {
         {professional && activeNav === 'Pacientes' && <PatientsScreen patients={patients} search={search} setSearch={setSearch} appointments={appointments} onOpen={openPatient} onNew={() => openPatient()} onWhatsApp={whatsappPatient} onTimes={sendAvailableTimes} onSchedule={(patient) => setAppointmentModal({ initial: { patient_id: patient.id, appointment_date: todayISO(), modality: patient.preferred_modality || 'online' } })} />}
         {professional && activeNav === 'Pendências' && <PendingScreen confirmations={pendingConfirmations} payments={pendingPayments} invoices={pendingInvoices} onOpen={setAppointmentModal} onWhatsApp={whatsappAppointment} onInvoice={setInvoiceModal} />}
         {professional && activeNav === 'Mensagens' && <MessagesScreen messages={messages} professional={professional} onSave={saveMessage} />}
-        {professional && activeNav === 'Configurações' && <SettingsScreen professional={professional} rules={rules} blocks={blocks} audit={audit} onEdit={() => setProfessionalModal(professional)} onSaveRules={saveRules} onBlock={() => setBlockModal({ date: todayISO(), block: null })} onEditBlock={(block) => setBlockModal({ date: block.block_date, block })} onDeleteBlock={deleteBlock} />}
+        {professional && activeNav === 'Configurações' && <SettingsScreen professional={professional} session={session} rules={rules} blocks={blocks} audit={audit} passkeys={passkeys} passkeyBusy={passkeyBusy} onEnablePasskey={enablePasskey} onRemovePasskey={removePasskey} onEdit={() => setProfessionalModal(professional)} onSaveRules={saveRules} onBlock={() => setBlockModal({ date: todayISO(), block: null })} onEditBlock={(block) => setBlockModal({ date: block.block_date, block })} onDeleteBlock={deleteBlock} />}
 
         {!professional && activeNav !== 'Profissionais' && <div className="empty-state big">Cadastre um profissional para começar.</div>}
       </main>
@@ -473,7 +534,7 @@ export default function App() {
         onWhatsApp={() => whatsappAppointment(appointmentModal)}
         onReturn={startReturn}
       />}
-      {patientModal && <PatientModal patient={patientModal.id ? patientModal : null} fiscal={patientFiscal} onClose={() => setPatientModal(null)} onSave={savePatient} onSaveFiscal={saveFiscal} onArchive={archivePatient} />}
+      {patientModal && <PatientModal patient={patientModal.id ? patientModal : null} fiscal={patientFiscal} onClose={() => setPatientModal(null)} onSave={savePatient} onArchive={archivePatient} onDelete={deletePatient} />}
       {professionalModal && <ProfessionalModal professional={professionalModal.id ? professionalModal : null} onClose={() => setProfessionalModal(null)} onSave={saveProfessional} />}
       {blockModal && <BlockModal initialDate={blockModal.date} block={blockModal.block} onClose={() => setBlockModal(null)} onSave={saveBlock} onRemove={deleteBlock} onExcludeDate={excludeBlockDate} />}
       {availability && <AvailabilityModal professionalId={professionalId} api={api} initial={availability.initial} mode={availability.mode} maxSelect={3} onClose={() => setAvailability(null)} onPick={pickSlot} onUseSelected={useSelectedSlots} />}
@@ -483,12 +544,13 @@ export default function App() {
   )
 }
 
-function LoginScreen({ slug, setupRequired, busy, error, onLogin, onSetup }) {
+function LoginScreen({ slug, setupRequired, busy, error, onLogin, onPasskey, onSetup }) {
   const isAdmin = slug === 'admin'
   const needsSetup = isAdmin && setupRequired
   const [name, setName] = useState('Julianna')
   const [password, setPassword] = useState('')
   const [confirm, setConfirm] = useState('')
+  const [remember, setRemember] = useState(true)
   const [localError, setLocalError] = useState('')
 
   function submit(e) {
@@ -500,7 +562,7 @@ function LoginScreen({ slug, setupRequired, busy, error, onLogin, onSetup }) {
       onSetup(name, password)
       return
     }
-    onLogin(password)
+    onLogin(password, remember)
   }
 
   return <div className="login-page">
@@ -508,14 +570,21 @@ function LoginScreen({ slug, setupRequired, busy, error, onLogin, onSetup }) {
       <div className="login-logo">L</div>
       <span className="eyebrow">Libri Agenda</span>
       <h1>{needsSetup ? 'Criar acesso da administradora' : isAdmin ? 'Área da administradora' : 'Acesso profissional'}</h1>
-      <p>{needsSetup ? 'Defina sua senha uma única vez.' : 'Digite sua senha para abrir a agenda.'}</p>
+      <p>{needsSetup ? 'Defina sua senha uma única vez.' : 'Entre com a senha ou com a biometria deste aparelho.'}</p>
       <form onSubmit={submit}>
         {needsSetup && <label className="field"><span>Seu nome</span><input value={name} onChange={(e)=>setName(e.target.value)} required /></label>}
         <label className="field"><span>Senha</span><input type="password" autoComplete="current-password" value={password} onChange={(e)=>setPassword(e.target.value)} minLength="8" required autoFocus /></label>
         {needsSetup && <label className="field"><span>Confirmar senha</span><input type="password" value={confirm} onChange={(e)=>setConfirm(e.target.value)} minLength="8" required /></label>}
+        {!needsSetup && <label className="remember-login"><input type="checkbox" checked={remember} onChange={(e)=>setRemember(e.target.checked)} /><span>Manter conectado neste aparelho</span></label>}
         {(localError || error) && <div className="login-error">{localError || error}</div>}
         <button className="primary-button login-submit" disabled={busy}>{busy ? 'Entrando...' : needsSetup ? 'Criar acesso' : 'Entrar'}</button>
+        {!needsSetup && passkeySupported() && (
+          <button type="button" className="biometric-login-button" disabled={busy} onClick={() => onPasskey(remember)}>
+            <Fingerprint size={19}/> Entrar com biometria
+          </button>
+        )}
       </form>
+      {!needsSetup && passkeySupported() && <small className="login-help">A digital, rosto ou PIN ficam no aparelho. A agenda não recebe seus dados biométricos.</small>}
       {!isAdmin && <small className="login-help">Este link abre somente o ambiente deste profissional.</small>}
     </div>
   </div>
@@ -600,12 +669,70 @@ function MessageEditor({ item, onClose, onSave }) {
   return <Modal title="Editar mensagem" subtitle="O texto fica salvo apenas para este profissional." onClose={onClose} wide><form className="form-grid" onSubmit={(e)=>{e.preventDefault();onSave(form)}}><label className="field"><span>Título</span><input value={form.title} onChange={(e)=>setForm({...form,title:e.target.value})}/></label><label className="field"><span>Chave</span><input value={form.template_key} disabled/></label><label className="field span-2"><span>Mensagem</span><textarea rows="12" value={form.content||''} onChange={(e)=>setForm({...form,content:e.target.value})}/></label><div className="modal-actions span-2"><button type="button" className="ghost-button" onClick={onClose}>Cancelar</button><button className="primary-button">Salvar mensagem</button></div></form></Modal>
 }
 
-function SettingsScreen({ professional, rules, blocks, audit, onEdit, onSaveRules, onBlock, onEditBlock, onDeleteBlock }) {
+function SettingsScreen({ professional, session, rules, blocks, audit, passkeys, passkeyBusy, onEnablePasskey, onRemovePasskey, onEdit, onSaveRules, onBlock, onEditBlock }) {
   const [tab,setTab]=useState('agenda')
   const initialWeekly = useMemo(()=>weekdays.map(([weekday,label])=>{const rule=rules.find((r)=>Number(r.weekday)===weekday);return {weekday,label,enabled:Boolean(rule),start_time:rule?.start_time||'09:00',end_time:rule?.end_time||'18:00',modality:rule?.modality||'both'}}),[rules])
   const [weekly,setWeekly]=useState(initialWeekly)
   useEffect(()=>setWeekly(initialWeekly),[initialWeekly])
-  return <><section className="page-head compact"><div><span className="eyebrow">Configurações</span><h1>{professional.name}</h1><p>Rotina, identidade, bloqueios e histórico.</p></div><button className="primary-button" onClick={onEdit}><Palette size={17}/> Identidade e valores</button></section><div className="tabs"><button className={tab==='agenda'?'active':''} onClick={()=>setTab('agenda')}>Agenda</button><button className={tab==='bloqueios'?'active':''} onClick={()=>setTab('bloqueios')}>Bloqueios</button><button className={tab==='historico'?'active':''} onClick={()=>setTab('historico')}>Histórico</button><button className={tab==='acesso'?'active':''} onClick={()=>setTab('acesso')}>Acesso</button></div>{tab==='agenda'&&<div className="panel"><div className="panel-head"><div><h2>Rotina semanal</h2><p className="muted">Use apenas os períodos em que consultas particulares podem ser marcadas.</p></div></div><div className="weekly-settings">{weekly.map((row,i)=><div className="weekly-row" key={row.weekday}><label className="check-field"><input type="checkbox" checked={row.enabled} onChange={(e)=>{const n=[...weekly];n[i]={...row,enabled:e.target.checked};setWeekly(n)}}/><strong>{row.label}</strong></label><input type="time" value={row.start_time} disabled={!row.enabled} onChange={(e)=>{const n=[...weekly];n[i]={...row,start_time:e.target.value};setWeekly(n)}}/><span>até</span><input type="time" value={row.end_time} disabled={!row.enabled} onChange={(e)=>{const n=[...weekly];n[i]={...row,end_time:e.target.value};setWeekly(n)}}/><select value={row.modality} disabled={!row.enabled} onChange={(e)=>{const n=[...weekly];n[i]={...row,modality:e.target.value};setWeekly(n)}}><option value="both">Online + presencial</option><option value="online">Somente online</option><option value="in_person">Somente presencial</option></select></div>)}</div><div className="panel-actions"><button className="primary-button" onClick={()=>onSaveRules(weekly.filter((r)=>r.enabled).map(({weekday,start_time,end_time,modality})=>({weekday,start_time,end_time,modality})))}>Salvar rotina</button></div></div>}{tab==='bloqueios'&&<div className="panel"><div className="panel-head"><div><h2>Bloqueios</h2><p className="muted">Ambulatório, pós, folga, férias e compromissos.</p></div><button className="primary-button" onClick={onBlock}><Plus size={16}/> Novo bloqueio</button></div><div className="block-list">{blocks.map((b)=><div className="block-item" key={b.id}><Ban size={17}/><div><strong>{b.title}</strong><small>{Number(b.recurring)===1?`Recorrente · ${weekdays.find(([d])=>d===Number(b.recurrence_weekday))?.[1]||''}`:blockIsPeriod(b)?`${formatDate(b.block_date)} a ${formatDate(b.end_date)}${Number(b.all_day)===1?' · dia inteiro':` · ${b.start_time}–${b.end_time}`}`:`${formatDate(b.block_date)}${Number(b.all_day)===1?' · dia inteiro':` · ${b.start_time}–${b.end_time}`}`}</small></div><button className="ghost-button compact-action" onClick={()=>onEditBlock(b)}>Abrir</button></div>)}{!blocks.length&&<div className="empty-state">Nenhum bloqueio cadastrado.</div>}</div></div>}{tab==='historico'&&<div className="panel"><div className="panel-head"><div><h2>Histórico de alterações</h2></div></div><div className="audit-list">{audit.map((a)=><div className="audit-item" key={a.id}><History size={16}/><div><strong>{a.description||a.action}</strong><small>{a.user_name||'Sistema'} · {new Date(a.created_at+'Z').toLocaleString('pt-BR')}</small></div></div>)}{!audit.length&&<div className="empty-state">Ainda não há alterações registradas.</div>}</div></div>}{tab==='acesso'&&<div className="panel access-panel"><LockKeyhole size={28}/><div><h2>Acesso da profissional</h2><p>{professional.access_slug ? <>Link direto: <code>{window.location.origin}/{professional.access_slug}</code>. A senha pode ser alterada em <strong>Identidade e valores</strong>.</> : <>Ainda não há login próprio configurado. Abra <strong>Identidade e valores</strong>, escolha o link e defina uma senha.</>}</p></div></div>}</>
+
+  return <>
+    <section className="page-head compact">
+      <div><span className="eyebrow">Configurações</span><h1>{professional.name}</h1><p>Rotina, identidade, bloqueios e histórico.</p></div>
+      <button className="primary-button" onClick={onEdit}><Palette size={17}/> Identidade e valores</button>
+    </section>
+
+    <div className="tabs">
+      <button className={tab==='agenda'?'active':''} onClick={()=>setTab('agenda')}>Agenda</button>
+      <button className={tab==='bloqueios'?'active':''} onClick={()=>setTab('bloqueios')}>Bloqueios</button>
+      <button className={tab==='historico'?'active':''} onClick={()=>setTab('historico')}>Histórico</button>
+      <button className={tab==='acesso'?'active':''} onClick={()=>setTab('acesso')}>Acesso</button>
+    </div>
+
+    {tab==='agenda'&&<div className="panel">
+      <div className="panel-head"><div><h2>Rotina semanal</h2><p className="muted">Use apenas os períodos em que consultas particulares podem ser marcadas.</p></div></div>
+      <div className="weekly-settings">{weekly.map((row,i)=><div className="weekly-row" key={row.weekday}><label className="check-field"><input type="checkbox" checked={row.enabled} onChange={(e)=>{const n=[...weekly];n[i]={...row,enabled:e.target.checked};setWeekly(n)}}/><strong>{row.label}</strong></label><input type="time" value={row.start_time} disabled={!row.enabled} onChange={(e)=>{const n=[...weekly];n[i]={...row,start_time:e.target.value};setWeekly(n)}}/><span>até</span><input type="time" value={row.end_time} disabled={!row.enabled} onChange={(e)=>{const n=[...weekly];n[i]={...row,end_time:e.target.value};setWeekly(n)}}/><select value={row.modality} disabled={!row.enabled} onChange={(e)=>{const n=[...weekly];n[i]={...row,modality:e.target.value};setWeekly(n)}}><option value="both">Online + presencial</option><option value="online">Somente online</option><option value="in_person">Somente presencial</option></select></div>)}</div>
+      <div className="panel-actions"><button className="primary-button" onClick={()=>onSaveRules(weekly.filter((r)=>r.enabled).map(({weekday,start_time,end_time,modality})=>({weekday,start_time,end_time,modality})))}>Salvar rotina</button></div>
+    </div>}
+
+    {tab==='bloqueios'&&<div className="panel">
+      <div className="panel-head"><div><h2>Bloqueios</h2><p className="muted">Ambulatório, pós, folga, férias e compromissos.</p></div><button className="primary-button" onClick={onBlock}><Plus size={16}/> Novo bloqueio</button></div>
+      <div className="block-list">{blocks.map((b)=><div className="block-item" key={b.id}><Ban size={17}/><div><strong>{b.title}</strong><small>{Number(b.recurring)===1?`Recorrente · ${weekdays.find(([d])=>d===Number(b.recurrence_weekday))?.[1]||''}`:blockIsPeriod(b)?`${formatDate(b.block_date)} a ${formatDate(b.end_date)}${Number(b.all_day)===1?' · dia inteiro':` · ${b.start_time}–${b.end_time}`}`:`${formatDate(b.block_date)}${Number(b.all_day)===1?' · dia inteiro':` · ${b.start_time}–${b.end_time}`}`}</small></div><button className="ghost-button compact-action" onClick={()=>onEditBlock(b)}>Abrir</button></div>)}{!blocks.length&&<div className="empty-state">Nenhum bloqueio cadastrado.</div>}</div>
+    </div>}
+
+    {tab==='historico'&&<div className="panel">
+      <div className="panel-head"><div><h2>Histórico de alterações</h2></div></div>
+      <div className="audit-list">{audit.map((a)=><div className="audit-item" key={a.id}><History size={16}/><div><strong>{a.description||a.action}</strong><small>{a.user_name||'Sistema'} · {new Date(a.created_at+'Z').toLocaleString('pt-BR')}</small></div></div>)}{!audit.length&&<div className="empty-state">Ainda não há alterações registradas.</div>}</div>
+    </div>}
+
+    {tab==='acesso'&&<>
+      <div className="panel access-panel">
+        <LockKeyhole size={28}/>
+        <div><h2>Acesso da profissional</h2><p>{professional.access_slug ? <>Link direto: <code>{window.location.origin}/{professional.access_slug}</code>. A senha pode ser alterada em <strong>Identidade e valores</strong>.</> : <>Ainda não há login próprio configurado. Abra <strong>Identidade e valores</strong>, escolha o link e defina uma senha.</>}</p></div>
+      </div>
+
+      <div className="panel security-panel">
+        <div className="security-head">
+          <Fingerprint size={28}/>
+          <div>
+            <h2>Biometria deste login</h2>
+            <p>{session?.role === 'admin' ? 'Você está configurando a biometria da administradora.' : 'Você está configurando a biometria deste acesso profissional.'} A digital, rosto ou PIN são verificados pelo próprio aparelho.</p>
+          </div>
+        </div>
+        {passkeySupported() ? (
+          <button className="primary-button fit" disabled={passkeyBusy} onClick={onEnablePasskey}>
+            <Fingerprint size={17}/> {passkeyBusy ? 'Aguardando aparelho...' : 'Ativar biometria neste aparelho'}
+          </button>
+        ) : (
+          <div className="helper">Este navegador não oferece suporte à biometria do aparelho.</div>
+        )}
+
+        <div className="passkey-list">
+          <strong>Biometrias cadastradas</strong>
+          {passkeys?.length ? passkeys.map((item)=><div className="passkey-item" key={item.id}><div><span>{item.device_label || 'Aparelho'}</span><small>{item.created_at ? `Cadastrada em ${new Date(item.created_at+'Z').toLocaleDateString('pt-BR')}` : ''}</small></div><button className="danger-soft" onClick={()=>onRemovePasskey(item.id)}>Remover</button></div>) : <small className="muted">Nenhuma biometria cadastrada para este login.</small>}
+        </div>
+      </div>
+    </>}
+  </>
 }
 
 function InvoiceModal({ appointment, onClose, onDone }) {
