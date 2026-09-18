@@ -20,8 +20,7 @@ import AvailabilityModal from './components/AvailabilityModal'
 import ProfessionalModal from './components/ProfessionalModal'
 import BlockModal from './components/BlockModal'
 
-const navItems = [
-  ['Profissionais', Stethoscope],
+const workspaceNavItems = [
   ['Início', Home],
   ['Agenda', CalendarDays],
   ['Pacientes', UsersRound],
@@ -30,11 +29,18 @@ const navItems = [
   ['Configurações', Settings],
 ]
 
+const adminNavItems = [
+  ['Home', Home],
+  ['Profissionais', Stethoscope],
+  ['Mensagens padrão', MessageCircle],
+  ['Configurações', Settings],
+]
+
 const weekdays = [
   [1, 'Segunda'], [2, 'Terça'], [3, 'Quarta'], [4, 'Quinta'], [5, 'Sexta'], [6, 'Sábado'], [0, 'Domingo'],
 ]
 
-const messageDefaults = [
+const messageTemplateCatalog = [
   ['first_contact', 'Primeiro contato'], ['online_info', 'Informações - Online'],
   ['in_person_info', 'Informações - Presencial'], ['values_online', 'Valores - Online'],
   ['values_in_person', 'Valores - Presencial'], ['available_times', 'Horários disponíveis'],
@@ -81,6 +87,7 @@ export default function App() {
   const [appointments, setAppointments] = useState([])
   const [blocks, setBlocks] = useState([])
   const [messages, setMessages] = useState([])
+  const [defaultMessages, setDefaultMessages] = useState([])
   const [rules, setRules] = useState([])
   const [audit, setAudit] = useState([])
   const [loading, setLoading] = useState(true)
@@ -113,7 +120,7 @@ export default function App() {
   const pendingInvoices = appointments.filter((a) => ['awaiting_data', 'ready'].includes(a.invoice_status))
 
   useEffect(() => { bootstrap() }, [])
-  useEffect(() => { if (professional) applyProfessionalTheme(professional) }, [professional])
+  useEffect(() => { applyProfessionalTheme(professional || null) }, [professional])
   useEffect(() => { if (professionalId) loadWorkspace(professionalId) }, [professionalId])
   useEffect(() => {
     if (!toast) return
@@ -131,6 +138,7 @@ export default function App() {
         setSession(null)
         setProfessionals([])
         setPasskeys([])
+        setDefaultMessages([])
         setProfessionalId(null)
         return
       }
@@ -138,15 +146,20 @@ export default function App() {
       if (sessionData.role === 'professional' && sessionData.slug && window.location.pathname !== `/${sessionData.slug}`) {
         window.history.replaceState({}, '', `/${sessionData.slug}`)
       }
-      const [professionalData, passkeyData] = await Promise.all([
+      const [professionalData, passkeyData, defaultMessageData] = await Promise.all([
         api.get('/api/professionals'),
         api.get('/api/auth/passkeys').catch(() => []),
+        api.get('/api/message-defaults').catch(() => []),
       ])
       setProfessionals(professionalData)
       setPasskeys(passkeyData)
-      if (professionalData.length) {
+      setDefaultMessages(defaultMessageData)
+      if (sessionData.role === 'professional' && professionalData.length) {
         setProfessionalId(professionalData[0].id)
-        setActiveNav(sessionData.role === 'professional' ? 'Início' : 'Profissionais')
+        setActiveNav('Início')
+      } else {
+        setProfessionalId(null)
+        setActiveNav('Home')
       }
     } catch (e) {
       setSession(null)
@@ -207,9 +220,10 @@ export default function App() {
     setSession(null)
     setProfessionals([])
     setPasskeys([])
+    setDefaultMessages([])
     setProfessionalId(null)
     setPatients([]); setAppointments([]); setBlocks([]); setMessages([]); setRules([]); setAudit([])
-    setActiveNav('Profissionais')
+    setActiveNav('Home')
   }
 
   async function loadProfessionals() {
@@ -237,6 +251,14 @@ export default function App() {
 
   function notify(text) { setToast(text) }
 
+  function leaveWorkspace() {
+    if (session?.role !== 'admin') return
+    setProfessionalId(null)
+    setPatients([]); setAppointments([]); setBlocks([]); setMessages([]); setRules([]); setAudit([])
+    setActiveNav('Home')
+    setSearch('')
+  }
+
   async function saveProfessional(data) {
     try {
       const { access_slug, new_password, ...profileData } = data
@@ -254,7 +276,10 @@ export default function App() {
       }
 
       const list = await loadProfessionals()
-      if (!professionalModal?.id && targetId) setProfessionalId(targetId)
+      if (!professionalModal?.id && targetId) {
+        setProfessionalId(targetId)
+        setActiveNav('Início')
+      }
       setProfessionalModal(null); notify('Profissional salvo.')
     } catch (e) { setError(e.message) }
   }
@@ -415,13 +440,31 @@ export default function App() {
   async function saveMessage(template) {
     try {
       const saved = await api.put(`/api/professionals/${professionalId}/messages`, template)
-      setMessages((prev) => [...prev.filter((m) => m.template_key !== saved.template_key), saved].sort((a, b) => a.id - b.id))
-      notify('Mensagem salva.')
+      setMessages((prev) => [...prev.filter((m) => m.template_key !== saved.template_key), saved].sort((a, b) => String(a.template_key).localeCompare(String(b.template_key))))
+      notify('Mensagem personalizada salva.')
+    } catch (e) { setError(e.message) }
+  }
+
+  async function resetMessage(templateKey) {
+    try {
+      await api.delete(`/api/professionals/${professionalId}/messages/${encodeURIComponent(templateKey)}`)
+      setMessages((prev) => prev.filter((m) => m.template_key !== templateKey))
+      notify('Mensagem voltou a usar o padrão.')
+    } catch (e) { setError(e.message) }
+  }
+
+  async function saveDefaultMessage(template) {
+    try {
+      const saved = await api.put('/api/message-defaults', template)
+      setDefaultMessages((prev) => [...prev.filter((m) => m.template_key !== saved.template_key), saved].sort((a, b) => String(a.template_key).localeCompare(String(b.template_key))))
+      notify('Mensagem padrão salva.')
     } catch (e) { setError(e.message) }
   }
 
   function messageTemplate(key) {
-    return messages.find((m) => m.template_key === key)?.content || ''
+    const custom = messages.find((m) => m.template_key === key)?.content
+    if (custom) return custom
+    return defaultMessages.find((m) => m.template_key === key)?.content || ''
   }
 
   function appointmentVars(item) {
@@ -433,6 +476,7 @@ export default function App() {
       valor: formatBRL(item.price),
       link_consulta: professional?.online_link || '',
       pix: professional?.pix_key || '',
+      profissional: professional?.name || '',
     }
   }
 
@@ -447,7 +491,7 @@ export default function App() {
   function whatsappPatient(patient, key = 'first_contact') {
     try {
       const fallback = `Olá, ${patient.full_name}! Tudo bem? Eu cuido dos agendamentos de ${professional.name}. Como posso te ajudar?`
-      const text = renderTemplate(messageTemplate(key) || fallback, { nome: patient.full_name })
+      const text = renderTemplate(messageTemplate(key) || fallback, { nome: patient.full_name, profissional: professional?.name || '' })
       openWhatsApp(patient.whatsapp, text)
     } catch (e) { setError(e.message) }
   }
@@ -460,7 +504,7 @@ export default function App() {
   function useSelectedSlots(slots) {
     const lines = slots.map((s) => `• ${formatDate(s.date)} às ${s.start_time}`).join('\n')
     const template = messageTemplate('available_times') || 'Olá, {nome}! Tenho estes horários disponíveis:\n\n{horarios}\n\nQual deles fica melhor para você?'
-    const text = renderTemplate(template, { nome: messagePatient.full_name, horarios: lines })
+    const text = renderTemplate(template, { nome: messagePatient.full_name, horarios: lines, profissional: professional?.name || '' })
     try { openWhatsApp(messagePatient.whatsapp, text) } catch (e) { setError(e.message) }
     setAvailability(null); setMessagePatient(null)
   }
@@ -472,12 +516,18 @@ export default function App() {
     return <LoginScreen slug={slug} setupRequired={setupRequired} busy={authBusy} error={error} onLogin={login} onPasskey={biometricLogin} onSetup={setupAdmin} />
   }
 
+  const inWorkspace = Boolean(professionalId && professional)
+  const sidebarItems = session?.role === 'admin' && !inWorkspace ? adminNavItems : workspaceNavItems
+
   return (
     <div className="app-shell">
       <aside className="sidebar">
         <div className="brand"><div className="brand-mark">L</div><div><strong>Libri Agenda</strong><span>gestão de atendimentos</span></div></div>
+        {session?.role === 'admin' && inWorkspace && (
+          <button className="workspace-back" onClick={leaveWorkspace}><ChevronLeft size={17}/> Voltar à Home</button>
+        )}
         <nav>
-          {navItems.filter(([name]) => session?.role !== 'professional' || name !== 'Profissionais').map(([name, Icon]) => (
+          {sidebarItems.map(([name, Icon]) => (
             <button key={name} className={activeNav === name ? 'nav-item active' : 'nav-item'} onClick={() => setActiveNav(name)}><Icon size={17} />{name}</button>
           ))}
         </nav>
@@ -498,7 +548,9 @@ export default function App() {
             </div>
           )}
           <div className="top-actions">
+            {session?.role === 'admin' && inWorkspace && <button className="ghost-button workspace-home-button" onClick={leaveWorkspace}><Home size={17}/><span>Home</span></button>}
             {professional && <button className="icon-button" title="Buscar" onClick={() => setActiveNav('Pacientes')}><Search size={18} /></button>}
+            {professional && <button className="icon-button mobile-settings-button" title="Configurações" aria-label="Configurações" onClick={() => setActiveNav('Configurações')}><Settings size={18} /></button>}
             {professional && <button className="primary-button" onClick={() => setAppointmentModal({ initial: { appointment_date: todayISO() } })}><Plus size={18} /> Novo agendamento</button>}
             <button className="ghost-button" onClick={logout}>Sair</button>
           </div>
@@ -507,20 +559,29 @@ export default function App() {
         {error && <div className="error-banner"><span>{error}</span><button onClick={() => setError('')}>×</button></div>}
         {workspaceLoading && <div className="thin-loader" />}
 
-        {activeNav === 'Profissionais' && session?.role !== 'professional' && (
+        {session?.role === 'admin' && !inWorkspace && activeNav === 'Home' && (
+          <AdminHomeScreen session={session} professionals={professionals} onOpen={(id) => { setProfessionalId(id); setActiveNav('Início') }} onAdd={() => setProfessionalModal({})} onMessages={() => setActiveNav('Mensagens padrão')} />
+        )}
+        {session?.role === 'admin' && !inWorkspace && activeNav === 'Profissionais' && (
           <ProfessionalsScreen professionals={professionals} onOpen={(id) => { setProfessionalId(id); setActiveNav('Início') }} onEdit={setProfessionalModal} onAdd={() => setProfessionalModal({})} />
+        )}
+        {session?.role === 'admin' && !inWorkspace && activeNav === 'Mensagens padrão' && (
+          <DefaultMessagesScreen messages={defaultMessages} onSave={saveDefaultMessage} />
+        )}
+        {session?.role === 'admin' && !inWorkspace && activeNav === 'Configurações' && (
+          <AdminSettingsScreen session={session} passkeys={passkeys} passkeyBusy={passkeyBusy} onEnablePasskey={enablePasskey} onRemovePasskey={removePasskey} />
         )}
         {professional && activeNav === 'Início' && <HomeScreen professional={professional} todayAppointments={todayAppointments} pendingConfirmations={pendingConfirmations} pendingPayments={pendingPayments} pendingInvoices={pendingInvoices} onOpenAppointment={setAppointmentModal} onAgenda={() => setActiveNav('Agenda')} onFind={() => setAvailability({ mode: 'pick', initial: { from: todayISO(), type: 'first', modality: 'online' }, context: { kind: 'new', draft: { appointment_type: 'first', modality: 'online' } } })} />}
         {professional && activeNav === 'Agenda' && <AgendaScreen date={calendarDate} setDate={setCalendarDate} view={calendarView} setView={setCalendarView} appointments={appointments} blocks={blocks} onAppointment={setAppointmentModal} onNew={(date) => setAppointmentModal({ initial: { appointment_date: date } })} onBlock={(date, block = null) => setBlockModal({ date, block })} />}
         {professional && activeNav === 'Pacientes' && <PatientsScreen patients={patients} search={search} setSearch={setSearch} appointments={appointments} onOpen={openPatient} onNew={() => openPatient()} onWhatsApp={whatsappPatient} onTimes={sendAvailableTimes} onSchedule={(patient) => setAppointmentModal({ initial: { patient_id: patient.id, appointment_date: todayISO(), modality: patient.preferred_modality || 'online' } })} />}
         {professional && activeNav === 'Pendências' && <PendingScreen confirmations={pendingConfirmations} payments={pendingPayments} invoices={pendingInvoices} onOpen={setAppointmentModal} onWhatsApp={whatsappAppointment} onInvoice={setInvoiceModal} />}
-        {professional && activeNav === 'Mensagens' && <MessagesScreen messages={messages} professional={professional} onSave={saveMessage} />}
+        {professional && activeNav === 'Mensagens' && <MessagesScreen messages={messages} defaults={defaultMessages} professional={professional} onSave={saveMessage} onReset={resetMessage} />}
         {professional && activeNav === 'Configurações' && <SettingsScreen professional={professional} session={session} rules={rules} blocks={blocks} audit={audit} passkeys={passkeys} passkeyBusy={passkeyBusy} onEnablePasskey={enablePasskey} onRemovePasskey={removePasskey} onEdit={() => setProfessionalModal(professional)} onSaveRules={saveRules} onBlock={() => setBlockModal({ date: todayISO(), block: null })} onEditBlock={(block) => setBlockModal({ date: block.block_date, block })} onDeleteBlock={deleteBlock} />}
 
-        {!professional && activeNav !== 'Profissionais' && <div className="empty-state big">Cadastre um profissional para começar.</div>}
+        {session?.role === 'professional' && !professional && <div className="empty-state big">Seu ambiente profissional não está disponível.</div>}
       </main>
 
-      <MobileNav active={activeNav} setActive={setActiveNav} role={session?.role} />
+      <MobileNav active={activeNav} setActive={setActiveNav} role={session?.role} inWorkspace={inWorkspace} onHome={leaveWorkspace} />
 
       {appointmentModal && <AppointmentModal
         appointment={appointmentModal.id ? appointmentModal : null}
@@ -590,6 +651,58 @@ function LoginScreen({ slug, setupRequired, busy, error, onLogin, onPasskey, onS
   </div>
 }
 
+function AdminHomeScreen({ session, professionals, onOpen, onAdd, onMessages }) {
+  return <>
+    <section className="admin-home-hero">
+      <div><span className="eyebrow">Central administrativa</span><h1>Home</h1><p>Escolha um profissional para entrar no ambiente dele ou cuide das configurações gerais da sua operação.</p></div>
+      <button className="primary-button" onClick={onAdd}><Plus size={18}/> Cadastrar profissional</button>
+    </section>
+
+    <div className="admin-summary-grid">
+      <article className="admin-summary-card"><Stethoscope size={22}/><div><strong>{professionals.length}</strong><span>{professionals.length === 1 ? 'profissional ativo' : 'profissionais ativos'}</span></div></article>
+      <button className="admin-summary-card action-card" onClick={onMessages}><MessageCircle size={22}/><div><strong>Mensagens padrão</strong><span>Defina textos usados por todos, com personalização por profissional.</span></div></button>
+    </div>
+
+    <section className="admin-home-section">
+      <div className="panel-head"><div><span className="eyebrow">Ambientes</span><h2>Profissionais</h2></div></div>
+      <div className="admin-professional-list">
+        {professionals.map((p)=><button key={p.id} className="admin-professional-row" onClick={()=>onOpen(p.id)}>
+          {p.photo_url ? <img src={p.photo_url} alt=""/> : <div className="avatar">{initials(p.name)}</div>}
+          <div><strong>{p.name}</strong><span>{p.specialty || 'Profissional'}</span></div>
+          <span className="open-workspace">Abrir ambiente <ChevronRight size={16}/></span>
+        </button>)}
+        {!professionals.length && <div className="empty-state">Nenhum profissional cadastrado ainda.</div>}
+      </div>
+    </section>
+  </>
+}
+
+function DefaultMessagesScreen({ messages, onSave }) {
+  const map = Object.fromEntries(messages.map((m)=>[m.template_key,m]))
+  const [editing,setEditing]=useState(null)
+  return <>
+    <section className="page-head compact"><div><span className="eyebrow">Central administrativa</span><h1>Mensagens padrão</h1><p>Esses textos são usados automaticamente quando o profissional não possui uma versão personalizada.</p></div></section>
+    <div className="message-grid">
+      {messageTemplateCatalog.map(([key,title])=>{const item=map[key];return <article className="message-card" key={key}>
+        <div className="message-card-head"><div><strong>{item?.title||title}</strong><small>Padrão · {key}</small></div><button className="ghost-button small" onClick={()=>setEditing(item||{template_key:key,title,content:'',active:1})}>Editar</button></div>
+        <p>{item?.content||'Ainda não configurada.'}</p>
+      </article>})}
+    </div>
+    {editing&&<MessageEditor item={editing} subtitle="Este texto será o padrão para todos os profissionais que não tiverem uma versão própria." onClose={()=>setEditing(null)} onSave={async(v)=>{await onSave(v);setEditing(null)}}/>}
+  </>
+}
+
+function AdminSettingsScreen({ session, passkeys, passkeyBusy, onEnablePasskey, onRemovePasskey }) {
+  return <>
+    <section className="page-head compact"><div><span className="eyebrow">Central administrativa</span><h1>Configurações</h1><p>Segurança do seu acesso à Libri Agenda.</p></div></section>
+    <div className="panel security-panel">
+      <div className="security-head"><Fingerprint size={28}/><div><h2>Biometria da administradora</h2><p>Cadastre este aparelho para entrar usando digital, rosto ou PIN sem digitar sua senha.</p></div></div>
+      {passkeySupported() ? <button className="primary-button fit" disabled={passkeyBusy} onClick={onEnablePasskey}><Fingerprint size={17}/> {passkeyBusy?'Aguardando aparelho...':'Ativar biometria neste aparelho'}</button> : <div className="helper">Este navegador não oferece suporte à biometria do aparelho.</div>}
+      <div className="passkey-list"><strong>Biometrias cadastradas</strong>{passkeys?.length?passkeys.map((item)=><div className="passkey-item" key={item.id}><div><span>{item.device_label||'Aparelho'}</span><small>{item.created_at?`Cadastrada em ${new Date(item.created_at+'Z').toLocaleDateString('pt-BR')}`:''}</small></div><button className="danger-soft" onClick={()=>onRemovePasskey(item.id)}>Remover</button></div>):<small className="muted">Nenhuma biometria cadastrada para este acesso.</small>}</div>
+    </div>
+  </>
+}
+
 function ProfessionalsScreen({ professionals, onOpen, onEdit, onAdd }) {
   return <>
     <section className="page-head"><div><span className="eyebrow">Sua operação</span><h1>Meus profissionais</h1><p>Cada ambiente tem agenda, pacientes, mensagens e identidade próprios.</p></div><button className="primary-button" onClick={onAdd}><Plus size={18} /> Cadastrar profissional</button></section>
@@ -598,7 +711,7 @@ function ProfessionalsScreen({ professionals, onOpen, onEdit, onAdd }) {
         <div className="professional-card-top">{p.photo_url ? <img src={p.photo_url} alt="" /> : <div className="pro-avatar">{initials(p.name)}</div>}<span className="active-dot">Ativo</span></div>
         <h2>{p.name}</h2><p>{p.specialty || 'Profissional'}</p>
         <div className="color-dots"><i style={{ background: p.primary_color }} /><i style={{ background: p.secondary_color }} /><i style={{ background: p.accent_color }} /></div>
-        <div className="card-actions"><button className="primary-button" onClick={() => onOpen(p.id)}>Abrir agenda</button><button className="ghost-button" onClick={() => onEdit(p)}><Palette size={16} /> Editar</button></div>
+        <div className="card-actions"><button className="primary-button" onClick={() => onOpen(p.id)}>Abrir ambiente</button><button className="ghost-button" onClick={() => onEdit(p)}><Palette size={16} /> Editar</button></div>
       </article>)}
       {!professionals.length && <div className="empty-state big">Nenhum profissional cadastrado ainda.</div>}
     </div>
@@ -658,15 +771,35 @@ function PendingScreen({ confirmations, payments, invoices, onOpen, onWhatsApp, 
   return <><section className="page-head compact"><div><span className="eyebrow">Controle diário</span><h1>Pendências</h1><p>Resolveu, a pendência some automaticamente.</p></div></section><div className="pending-grid"><PendingGroup title="Confirmações" icon={MessageCircle} items={confirmations} empty="Nenhuma confirmação pendente." render={(a)=><PendingItem key={a.id} item={a} onOpen={()=>onOpen(a)} action={<button onClick={()=>onWhatsApp(a)}>WhatsApp</button>}/>} /><PendingGroup title="Pagamentos" icon={WalletCards} items={payments} empty="Nenhum pagamento pendente." render={(a)=><PendingItem key={a.id} item={a} onOpen={()=>onOpen(a)} action={<button onClick={()=>onOpen(a)}>Abrir</button>}/>} /><PendingGroup title="Notas fiscais" icon={FileText} items={invoices} empty="Nenhuma NF pendente." render={(a)=><PendingItem key={a.id} item={a} onOpen={()=>onOpen(a)} action={<button onClick={()=>onInvoice(a)}>NF</button>}/>} /></div></>
 }
 
-function MessagesScreen({ messages, professional, onSave }) {
-  const map = Object.fromEntries(messages.map((m)=>[m.template_key,m]))
+function MessagesScreen({ messages, defaults, professional, onSave, onReset }) {
+  const customMap = Object.fromEntries(messages.map((m)=>[m.template_key,m]))
+  const defaultMap = Object.fromEntries(defaults.map((m)=>[m.template_key,m]))
   const [editing, setEditing] = useState(null)
-  return <><section className="page-head compact"><div><span className="eyebrow">WhatsApp</span><h1>Mensagens de {professional.name}</h1><p>Use variáveis como {'{nome}'}, {'{data}'}, {'{hora}'}, {'{valor}'}, {'{horarios}'}, {'{pix}'}.</p></div></section><div className="message-grid">{messageDefaults.map(([key,title])=>{const item=map[key];return <article className="message-card" key={key}><div className="message-card-head"><div><strong>{item?.title||title}</strong><small>{key}</small></div><button className="ghost-button small" onClick={()=>setEditing(item||{template_key:key,title,content:'',active:1})}>Editar</button></div><p>{item?.content||'Ainda não configurada.'}</p></article>})}</div>{editing&&<MessageEditor item={editing} onClose={()=>setEditing(null)} onSave={async(v)=>{await onSave(v);setEditing(null)}}/>}</>
+
+  return <>
+    <section className="page-head compact"><div><span className="eyebrow">WhatsApp</span><h1>Mensagens de {professional.name}</h1><p>Por padrão, este ambiente usa as mensagens gerais. Personalize somente o que precisar.</p></div></section>
+    <div className="message-grid">{messageTemplateCatalog.map(([key,title])=>{
+      const custom=customMap[key]
+      const base=defaultMap[key]
+      const effective=custom||base
+      return <article className="message-card" key={key}>
+        <div className="message-card-head">
+          <div><strong>{effective?.title||title}</strong><small className={custom?'message-source custom':'message-source'}>{custom?'Personalizada':'Usando padrão'} · {key}</small></div>
+          <div className="message-card-actions">
+            {custom&&<button className="text-button" onClick={()=>onReset(key)}>Usar padrão</button>}
+            <button className="ghost-button small" onClick={()=>setEditing({...(effective||{template_key:key,title,content:'',active:1}), template_key:key, title:effective?.title||title})}>{custom?'Editar':'Personalizar'}</button>
+          </div>
+        </div>
+        <p>{effective?.content||'Ainda não há texto padrão configurado.'}</p>
+      </article>
+    })}</div>
+    {editing&&<MessageEditor item={editing} subtitle={`Esta versão será usada somente por ${professional.name}.`} onClose={()=>setEditing(null)} onSave={async(v)=>{await onSave(v);setEditing(null)}}/>}
+  </>
 }
 
-function MessageEditor({ item, onClose, onSave }) {
+function MessageEditor({ item, subtitle = 'Edite o texto da mensagem.', onClose, onSave }) {
   const [form,setForm]=useState(item)
-  return <Modal title="Editar mensagem" subtitle="O texto fica salvo apenas para este profissional." onClose={onClose} wide><form className="form-grid" onSubmit={(e)=>{e.preventDefault();onSave(form)}}><label className="field"><span>Título</span><input value={form.title} onChange={(e)=>setForm({...form,title:e.target.value})}/></label><label className="field"><span>Chave</span><input value={form.template_key} disabled/></label><label className="field span-2"><span>Mensagem</span><textarea rows="12" value={form.content||''} onChange={(e)=>setForm({...form,content:e.target.value})}/></label><div className="modal-actions span-2"><button type="button" className="ghost-button" onClick={onClose}>Cancelar</button><button className="primary-button">Salvar mensagem</button></div></form></Modal>
+  return <Modal title="Editar mensagem" subtitle={subtitle} onClose={onClose} wide><form className="form-grid" onSubmit={(e)=>{e.preventDefault();onSave(form)}}><label className="field"><span>Título</span><input value={form.title} onChange={(e)=>setForm({...form,title:e.target.value})}/></label><label className="field"><span>Chave</span><input value={form.template_key} disabled/></label><label className="field span-2"><span>Mensagem</span><textarea rows="12" value={form.content||''} onChange={(e)=>setForm({...form,content:e.target.value})}/><small className="muted">Variáveis: {'{nome}'}, {'{profissional}'}, {'{data}'}, {'{hora}'}, {'{valor}'}, {'{horarios}'}, {'{pix}'}.</small></label><div className="modal-actions span-2"><button type="button" className="ghost-button" onClick={onClose}>Cancelar</button><button className="primary-button">Salvar mensagem</button></div></form></Modal>
 }
 
 function SettingsScreen({ professional, session, rules, blocks, audit, passkeys, passkeyBusy, onEnablePasskey, onRemovePasskey, onEdit, onSaveRules, onBlock, onEditBlock }) {
@@ -710,27 +843,14 @@ function SettingsScreen({ professional, session, rules, blocks, audit, passkeys,
         <div><h2>Acesso da profissional</h2><p>{professional.access_slug ? <>Link direto: <code>{window.location.origin}/{professional.access_slug}</code>. A senha pode ser alterada em <strong>Identidade e valores</strong>.</> : <>Ainda não há login próprio configurado. Abra <strong>Identidade e valores</strong>, escolha o link e defina uma senha.</>}</p></div>
       </div>
 
-      <div className="panel security-panel">
+      {session?.role === 'professional' ? <div className="panel security-panel">
         <div className="security-head">
           <Fingerprint size={28}/>
-          <div>
-            <h2>Biometria deste login</h2>
-            <p>{session?.role === 'admin' ? 'Você está configurando a biometria da administradora.' : 'Você está configurando a biometria deste acesso profissional.'} A digital, rosto ou PIN são verificados pelo próprio aparelho.</p>
-          </div>
+          <div><h2>Biometria deste login</h2><p>A digital, rosto ou PIN são verificados pelo próprio aparelho.</p></div>
         </div>
-        {passkeySupported() ? (
-          <button className="primary-button fit" disabled={passkeyBusy} onClick={onEnablePasskey}>
-            <Fingerprint size={17}/> {passkeyBusy ? 'Aguardando aparelho...' : 'Ativar biometria neste aparelho'}
-          </button>
-        ) : (
-          <div className="helper">Este navegador não oferece suporte à biometria do aparelho.</div>
-        )}
-
-        <div className="passkey-list">
-          <strong>Biometrias cadastradas</strong>
-          {passkeys?.length ? passkeys.map((item)=><div className="passkey-item" key={item.id}><div><span>{item.device_label || 'Aparelho'}</span><small>{item.created_at ? `Cadastrada em ${new Date(item.created_at+'Z').toLocaleDateString('pt-BR')}` : ''}</small></div><button className="danger-soft" onClick={()=>onRemovePasskey(item.id)}>Remover</button></div>) : <small className="muted">Nenhuma biometria cadastrada para este login.</small>}
-        </div>
-      </div>
+        {passkeySupported() ? <button className="primary-button fit" disabled={passkeyBusy} onClick={onEnablePasskey}><Fingerprint size={17}/> {passkeyBusy ? 'Aguardando aparelho...' : 'Ativar biometria neste aparelho'}</button> : <div className="helper">Este navegador não oferece suporte à biometria do aparelho.</div>}
+        <div className="passkey-list"><strong>Biometrias cadastradas</strong>{passkeys?.length ? passkeys.map((item)=><div className="passkey-item" key={item.id}><div><span>{item.device_label || 'Aparelho'}</span><small>{item.created_at ? `Cadastrada em ${new Date(item.created_at+'Z').toLocaleDateString('pt-BR')}` : ''}</small></div><button className="danger-soft" onClick={()=>onRemovePasskey(item.id)}>Remover</button></div>) : <small className="muted">Nenhuma biometria cadastrada para este login.</small>}</div>
+      </div> : <div className="panel access-note"><Home size={22}/><div><strong>Sua biometria fica na Home administrativa</strong><p className="muted">Volte à Home e abra Configurações para gerenciar a biometria da administradora.</p></div></div>}
     </>}
   </>
 }
@@ -823,4 +943,9 @@ function BlockRow({ block, onOpen }) { return <button type="button" className="b
 function Stat({ icon:Icon,label,value }) { return <div className="stat-card"><div className="stat-icon"><Icon size={18}/></div><strong>{value}</strong><span>{label}</span></div> }
 function PendingGroup({ title, icon:Icon, items, empty, render }) { return <section className="panel"><div className="panel-head"><div className="group-title"><Icon size={18}/><h2>{title}</h2></div><span className="count-pill">{items.length}</span></div>{items.length?items.map(render):<div className="empty-state">{empty}</div>}</section> }
 function PendingItem({ item, onOpen, action }) { return <div className="pending-item"><button onClick={onOpen}><strong>{item.patient_name}</strong><span>{formatDate(item.appointment_date)} · {item.start_time}</span></button>{action}</div> }
-function MobileNav({ active,setActive,role }) { const items=[['Início',Home],['Agenda',CalendarDays],['Pacientes',UsersRound],['Pendências',WalletCards],['Mensagens',MessageCircle]];return <div className="mobile-nav">{items.map(([name,Icon])=><button key={name} className={active===name?'active':''} onClick={()=>setActive(name)}><Icon size={19}/><span>{name}</span></button>)}</div> }
+function MobileNav({ active, setActive, role, inWorkspace, onHome }) {
+  const items = role === 'admin' && !inWorkspace
+    ? [['Home',Home],['Profissionais',Stethoscope],['Mensagens padrão',MessageCircle],['Configurações',Settings]]
+    : [['Início',Home],['Agenda',CalendarDays],['Pacientes',UsersRound],['Pendências',WalletCards],['Mensagens',MessageCircle]]
+  return <div className="mobile-nav" style={{ gridTemplateColumns: `repeat(${items.length}, 1fr)` }}>{items.map(([name,Icon])=><button key={name} className={active===name?'active':''} onClick={()=>setActive(name)}><Icon size={19}/><span>{name}</span></button>)}</div>
+}
