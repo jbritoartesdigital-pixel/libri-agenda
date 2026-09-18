@@ -10,7 +10,7 @@ const emptyForm = {
 }
 
 export default function AppointmentModal({
-  appointment, professional, patients, initial, onClose, onSave, onStatus, onFindTime, onWhatsApp, onReturn,
+  appointment, professional, patients, initial, onClose, onSave, onStatus, onFindTime, onWhatsApp, onReturn, onDelete,
 }) {
   const [form, setForm] = useState(emptyForm)
   const editing = Boolean(appointment?.id)
@@ -176,13 +176,21 @@ export default function AppointmentModal({
         <div className="action-zone">
           <span className="section-label">Ações rápidas</span>
           <div className="button-row wrap">
-            <button onClick={onWhatsApp}>WhatsApp</button>
-            <button onClick={() => onFindTime?.(form)}>Reagendar</button>
-            <button onClick={() => onReturn?.()}>Agendar retorno</button>
-            <button onClick={() => onStatus('confirmed')}>Confirmar</button>
-            <button onClick={() => onStatus('completed')}>Realizada</button>
-            <button onClick={() => onStatus('no_show')}>Faltou</button>
-            <button onClick={() => onStatus('cancelled')} className="danger-soft">Cancelar consulta</button>
+            <button type="button" onClick={onWhatsApp}>WhatsApp</button>
+            <button type="button" onClick={() => onFindTime?.(form)}>Reagendar</button>
+            <button type="button" onClick={() => onReturn?.()}>Agendar retorno</button>
+            <button type="button" onClick={() => onStatus('confirmed')}>Confirmar</button>
+            <button type="button" onClick={() => onStatus('completed')}>Realizada</button>
+            <button type="button" onClick={() => onStatus('no_show')}>Faltou</button>
+            <button type="button" onClick={() => onStatus('cancelled')} className="danger-soft">Cancelar consulta</button>
+          </div>
+
+          <div className="action-zone">
+            <span className="section-label">Cadastro feito por engano</span>
+            <div className="button-row wrap">
+              <button type="button" onClick={onDelete} className="danger-soft">Excluir agendamento</button>
+            </div>
+            <div className="helper">Excluir remove o agendamento definitivamente. Para uma consulta que foi realmente marcada e depois cancelada, use “Cancelar consulta”.</div>
           </div>
         </div>
       )}
