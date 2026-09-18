@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import {
   CalendarDays, ChevronLeft, ChevronRight, Clock3, FileText, Home, MessageCircle,
   Plus, Search, Settings, Stethoscope, UsersRound, WalletCards, XCircle, CheckCircle2,
@@ -176,15 +176,24 @@ export default function App() {
     } catch (e) { setError(e.message) } finally { setAuthBusy(false) }
   }
 
-  async function biometricLogin(remember = true) {
-    setAuthBusy(true); setError('')
+  async function biometricLogin(remember = true, automatic = false) {
+    setAuthBusy(true)
+    if (!automatic) setError('')
     try {
       const slug = window.location.pathname.split('/').filter(Boolean)[0] || 'admin'
       await performPasskeyLogin(slug, remember)
       await bootstrap()
     } catch (e) {
-      if (e?.name !== 'NotAllowedError') setError(e.message || 'Não foi possível usar a biometria.')
-    } finally { setAuthBusy(false) }
+      const unavailable = /Ainda não há biometria cadastrada|Biometria não reconhecida|Acesso não encontrado/i.test(e?.message || '')
+      if (!automatic && e?.name !== 'NotAllowedError') {
+        setError(e.message || 'Não foi possível usar a biometria.')
+      } else if (automatic && !unavailable && e?.name !== 'NotAllowedError') {
+        // Falhas técnicas reais continuam visíveis; ausência/cancelamento apenas cai para senha.
+        setError(e.message || 'Não foi possível usar a biometria.')
+      }
+    } finally {
+      setAuthBusy(false)
+    }
   }
 
   async function enablePasskey() {
@@ -613,6 +622,20 @@ function LoginScreen({ slug, setupRequired, busy, error, onLogin, onPasskey, onS
   const [confirm, setConfirm] = useState('')
   const [remember, setRemember] = useState(true)
   const [localError, setLocalError] = useState('')
+  const autoPasskeyStarted = useRef(false)
+
+  useEffect(() => {
+    if (needsSetup || !passkeySupported() || autoPasskeyStarted.current) return
+    if (document.visibilityState !== 'visible') return
+
+    autoPasskeyStarted.current = true
+    const timer = window.setTimeout(() => {
+      onPasskey(true, true)
+    }, 250)
+
+    return () => window.clearTimeout(timer)
+    // Executar uma única vez para este link de login.
+  }, [slug, needsSetup])
 
   function submit(e) {
     e.preventDefault()
@@ -631,7 +654,7 @@ function LoginScreen({ slug, setupRequired, busy, error, onLogin, onPasskey, onS
       <div className="login-logo">L</div>
       <span className="eyebrow">Libri Agenda</span>
       <h1>{needsSetup ? 'Criar acesso da administradora' : isAdmin ? 'Área da administradora' : 'Acesso profissional'}</h1>
-      <p>{needsSetup ? 'Defina sua senha uma única vez.' : 'Entre com a senha ou com a biometria deste aparelho.'}</p>
+      <p>{needsSetup ? 'Defina sua senha uma única vez.' : busy ? 'Verificando a biometria deste aparelho...' : 'A biometria é solicitada automaticamente quando estiver disponível. A senha continua como alternativa.'}</p>
       <form onSubmit={submit}>
         {needsSetup && <label className="field"><span>Seu nome</span><input value={name} onChange={(e)=>setName(e.target.value)} required /></label>}
         <label className="field"><span>Senha</span><input type="password" autoComplete="current-password" value={password} onChange={(e)=>setPassword(e.target.value)} minLength="8" required autoFocus /></label>
