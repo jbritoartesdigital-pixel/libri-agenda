@@ -723,3 +723,58 @@ button { border: 0; }
     justify-content: center;
   }
 }
+
+/* Bloqueios por período / edição no calendário */
+.block-row-button {
+  width: 100%;
+  border: 0;
+  font: inherit;
+  cursor: pointer;
+  text-align: left;
+}
+
+button.mini-block,
+button.month-block {
+  width: 100%;
+  border: 0;
+  font: inherit;
+  cursor: pointer;
+}
+
+button.mini-block:hover,
+button.month-block:hover,
+.block-row-button:hover {
+  filter: brightness(.98);
+}
+
+.compact-action {
+  min-height: 34px;
+  padding: 7px 10px;
+}
+
+.block-edit-summary {
+  display: grid;
+  gap: 3px;
+  padding: 11px 12px;
+  border-radius: 12px;
+  background: #f6f3ee;
+  border: 1px solid var(--border);
+}
+
+.block-edit-summary span {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.block-danger-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding-top: 2px;
+}
+
+@media (max-width: 560px) {
+  .block-danger-actions > button {
+    flex: 1 1 100%;
+  }
+}
