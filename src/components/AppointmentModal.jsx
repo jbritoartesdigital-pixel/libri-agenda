@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import Modal from './Modal'
 import StatusBadge from './StatusBadge'
-import { formatBRL } from '../lib/date'
+import { addDays, formatBRL, formatDate } from '../lib/date'
 
 const emptyForm = {
   patient_id: '', appointment_date: '', start_time: '09:00', appointment_type: 'first',
@@ -186,7 +186,20 @@ export default function AppointmentModal({
           {appointment.status === 'completed' && (
             <div className="return-row">
               <span>Agendar retorno:</span>
-              {[15, 30, 45, 60].map((days) => <button key={days} onClick={() => onReturn?.(days)}>{days} dias</button>)}
+              {[15, 30, 45, 60].map((days) => {
+                const target = addDays(appointment.appointment_date, days)
+                return (
+                  <button
+                    key={days}
+                    className={days === 30 ? 'return-primary' : ''}
+                    onClick={() => onReturn?.(days)}
+                    title={`Buscar horários a partir de ${formatDate(target)}`}
+                  >
+                    <strong>+{days}</strong>
+                    <small>{formatDate(target)}</small>
+                  </button>
+                )
+              })}
             </div>
           )}
         </div>
