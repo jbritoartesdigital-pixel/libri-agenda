@@ -55,6 +55,34 @@ function overlaps(startA, endA, startB, endB) {
   return startA < endB && endA > startB
 }
 
+function blockMatchesDate(block, date, weekday, exceptionDates = new Set()) {
+  if (exceptionDates.has(`${block.id}:${date}`)) return false
+
+  if (Number(block.recurring) === 1) {
+    if (block.block_date && date < block.block_date) return false
+    return Number(block.recurrence_weekday) === Number(weekday)
+  }
+
+  const endDate = block.end_date || block.block_date
+  return date >= block.block_date && date <= endDate
+}
+
+function normalizeBlockData(data) {
+  const recurring = Boolean(data.recurring)
+  const blockDate = String(data.block_date || '')
+  const endDate = recurring ? blockDate : String(data.end_date || blockDate)
+  return {
+    title: String(data.title || '').trim(),
+    block_date: blockDate,
+    end_date: endDate,
+    start_time: data.all_day ? null : (data.start_time || null),
+    end_time: data.all_day ? null : (data.end_time || null),
+    all_day: data.all_day ? 1 : 0,
+    recurring: recurring ? 1 : 0,
+    recurrence_weekday: recurring ? Number(data.recurrence_weekday) : null,
+  }
+}
+
 const SESSION_COOKIE = 'libri_session'
 const SESSION_MAX_AGE = 60 * 60 * 24 * 30
 const PBKDF2_ITERATIONS = 100000
@@ -236,12 +264,24 @@ async function listAvailability(env, professionalId, url) {
   const blocksResult = await env.DB.prepare(`
     SELECT * FROM schedule_blocks
     WHERE professional_id = ?
-      AND (recurring = 1 OR block_date BETWEEN ? AND ?)
+      AND (
+        recurring = 1
+        OR (block_date <= ? AND COALESCE(end_date, block_date) >= ?)
+      )
+  `).bind(professionalId, to, from).all()
+
+  const exceptionsResult = await env.DB.prepare(`
+    SELECT e.block_id, e.exception_date
+    FROM schedule_block_exceptions e
+    JOIN schedule_blocks b ON b.id = e.block_id
+    WHERE b.professional_id = ?
+      AND e.exception_date BETWEEN ? AND ?
   `).bind(professionalId, from, to).all()
 
   const rules = rulesResult.results || []
   const appointments = appointmentsResult.results || []
   const blocks = blocksResult.results || []
+  const exceptionDates = new Set((exceptionsResult.results || []).map((row) => `${row.block_id}:${row.exception_date}`))
   const slots = []
 
   for (let offset = 0; offset < days && slots.length < 50; offset += 1) {
@@ -266,9 +306,7 @@ async function listAvailability(env, professionalId, url) {
         if (period === 'afternoon' && start < 12 * 60) continue
 
         const blocked = blocks.some((block) => {
-          const recurringMatch = Number(block.recurring) === 1 && Number(block.recurrence_weekday) === weekday
-          const dateMatch = block.block_date === date
-          if (!recurringMatch && !dateMatch) return false
+          if (!blockMatchesDate(block, date, weekday, exceptionDates)) return false
           if (Number(block.all_day) === 1 || !block.start_time || !block.end_time) return true
           return overlaps(start, end, timeToMinutes(block.start_time), timeToMinutes(block.end_time))
         })
@@ -933,46 +971,123 @@ export default {
       if (blocksCollection) {
         const professionalId = Number(blocksCollection[1])
         if (!canAccessProfessional(session, professionalId)) return error('Sem acesso a este profissional.', 403)
+
         if (request.method === 'GET') {
           const from = url.searchParams.get('from')
           const to = url.searchParams.get('to')
           let query = 'SELECT * FROM schedule_blocks WHERE professional_id = ?'
           const params = [professionalId]
           if (from && to) {
-            query += ' AND (recurring = 1 OR block_date BETWEEN ? AND ?)'
-            params.push(from, to)
+            query += ' AND (recurring = 1 OR (block_date <= ? AND COALESCE(end_date, block_date) >= ?))'
+            params.push(to, from)
           }
           query += ' ORDER BY block_date, start_time'
-          return json((await env.DB.prepare(query).bind(...params).all()).results || [])
+          const blocks = (await env.DB.prepare(query).bind(...params).all()).results || []
+
+          if (!blocks.length) return json([])
+          let exceptionQuery = `
+            SELECT e.block_id, e.exception_date
+            FROM schedule_block_exceptions e
+            JOIN schedule_blocks b ON b.id = e.block_id
+            WHERE b.professional_id = ?
+          `
+          const exceptionParams = [professionalId]
+          if (from && to) {
+            exceptionQuery += ' AND e.exception_date BETWEEN ? AND ?'
+            exceptionParams.push(from, to)
+          }
+          const exceptions = (await env.DB.prepare(exceptionQuery).bind(...exceptionParams).all()).results || []
+          const byBlock = new Map()
+          for (const row of exceptions) {
+            if (!byBlock.has(Number(row.block_id))) byBlock.set(Number(row.block_id), [])
+            byBlock.get(Number(row.block_id)).push(row.exception_date)
+          }
+          return json(blocks.map((block) => ({ ...block, exceptions: byBlock.get(Number(block.id)) || [] })))
         }
+
         if (request.method === 'POST') {
-          const data = await bodyJson(request)
-          if (!data.title || !data.block_date) return error('Título e data são obrigatórios.')
+          const data = normalizeBlockData(await bodyJson(request))
+          if (!data.title || !data.block_date) return error('Motivo e data são obrigatórios.')
+          if (data.end_date < data.block_date) return error('A data final não pode ser anterior à data inicial.')
+          if (!data.all_day && (!data.start_time || !data.end_time)) return error('Informe o horário inicial e final.')
+          if (!data.all_day && data.end_time <= data.start_time) return error('O horário final precisa ser depois do inicial.')
+          if (data.recurring && !Number.isInteger(data.recurrence_weekday)) return error('Selecione o dia da recorrência.')
+
           const result = await env.DB.prepare(`
             INSERT INTO schedule_blocks (
-              professional_id, title, block_date, start_time, end_time,
+              professional_id, title, block_date, end_date, start_time, end_time,
               all_day, recurring, recurrence_weekday
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
           `).bind(
-            professionalId, data.title, data.block_date, data.start_time || null,
-            data.end_time || null, data.all_day ? 1 : 0, data.recurring ? 1 : 0,
-            data.recurrence_weekday ?? null,
+            professionalId, data.title, data.block_date, data.end_date,
+            data.start_time, data.end_time, data.all_day, data.recurring,
+            data.recurrence_weekday,
           ).run()
           const id = result.meta?.last_row_id
           await audit(env, session, professionalId, 'schedule_block', id, 'create', data.title)
-          return json(await env.DB.prepare('SELECT * FROM schedule_blocks WHERE id = ?').bind(id).first(), { status: 201 })
+          return json({ ...(await env.DB.prepare('SELECT * FROM schedule_blocks WHERE id = ?').bind(id).first()), exceptions: [] }, { status: 201 })
         }
       }
 
+      const blockExceptionMatch = url.pathname.match(/^\/api\/blocks\/(\d+)\/exceptions$/)
+      if (blockExceptionMatch && request.method === 'POST') {
+        const blockId = Number(blockExceptionMatch[1])
+        const block = await env.DB.prepare('SELECT * FROM schedule_blocks WHERE id = ?').bind(blockId).first()
+        if (!block) return error('Bloqueio não encontrado.', 404)
+        if (!canAccessProfessional(session, block.professional_id)) return error('Sem acesso a este bloqueio.', 403)
+        const data = await bodyJson(request)
+        const date = String(data.date || '')
+        if (!date) return error('Informe a data que deve ser liberada.')
+        const weekday = parseDate(date).getDay()
+        if (!blockMatchesDate(block, date, weekday, new Set())) return error('Essa data não pertence ao bloqueio.', 400)
+        await env.DB.prepare(`
+          INSERT OR IGNORE INTO schedule_block_exceptions (block_id, exception_date)
+          VALUES (?, ?)
+        `).bind(blockId, date).run()
+        await audit(env, session, block.professional_id, 'schedule_block_exception', blockId, 'create', `${block.title}: ${date} liberado`)
+        return json({ ok: true, block_id: blockId, exception_date: date })
+      }
+
       const blockMatch = url.pathname.match(/^\/api\/blocks\/(\d+)$/)
-      if (blockMatch && request.method === 'DELETE') {
+      if (blockMatch) {
         const blockId = Number(blockMatch[1])
         const block = await env.DB.prepare('SELECT * FROM schedule_blocks WHERE id = ?').bind(blockId).first()
         if (!block) return error('Bloqueio não encontrado.', 404)
         if (!canAccessProfessional(session, block.professional_id)) return error('Sem acesso a este bloqueio.', 403)
-        await env.DB.prepare('DELETE FROM schedule_blocks WHERE id = ?').bind(blockId).run()
-        await audit(env, session, block.professional_id, 'schedule_block', blockId, 'delete', block.title)
-        return json({ ok: true })
+
+        if (request.method === 'PATCH') {
+          const data = normalizeBlockData(await bodyJson(request))
+          if (!data.title || !data.block_date) return error('Motivo e data são obrigatórios.')
+          if (data.end_date < data.block_date) return error('A data final não pode ser anterior à data inicial.')
+          if (!data.all_day && (!data.start_time || !data.end_time)) return error('Informe o horário inicial e final.')
+          if (!data.all_day && data.end_time <= data.start_time) return error('O horário final precisa ser depois do inicial.')
+          if (data.recurring && !Number.isInteger(data.recurrence_weekday)) return error('Selecione o dia da recorrência.')
+
+          await env.DB.prepare(`
+            UPDATE schedule_blocks
+            SET title = ?, block_date = ?, end_date = ?, start_time = ?, end_time = ?,
+                all_day = ?, recurring = ?, recurrence_weekday = ?
+            WHERE id = ?
+          `).bind(
+            data.title, data.block_date, data.end_date, data.start_time, data.end_time,
+            data.all_day, data.recurring, data.recurrence_weekday, blockId,
+          ).run()
+          await env.DB.prepare(`
+            DELETE FROM schedule_block_exceptions
+            WHERE block_id = ?
+              AND (exception_date < ? OR exception_date > ?)
+          `).bind(blockId, data.block_date, data.recurring ? '9999-12-31' : data.end_date).run()
+          await audit(env, session, block.professional_id, 'schedule_block', blockId, 'update', data.title)
+          const exceptions = (await env.DB.prepare('SELECT exception_date FROM schedule_block_exceptions WHERE block_id = ? ORDER BY exception_date').bind(blockId).all()).results || []
+          return json({ ...(await env.DB.prepare('SELECT * FROM schedule_blocks WHERE id = ?').bind(blockId).first()), exceptions: exceptions.map((row) => row.exception_date) })
+        }
+
+        if (request.method === 'DELETE') {
+          await env.DB.prepare('DELETE FROM schedule_block_exceptions WHERE block_id = ?').bind(blockId).run()
+          await env.DB.prepare('DELETE FROM schedule_blocks WHERE id = ?').bind(blockId).run()
+          await audit(env, session, block.professional_id, 'schedule_block', blockId, 'delete', block.title)
+          return json({ ok: true })
+        }
       }
 
       // SCHEDULE RULES ------------------------------------------------------
