@@ -778,3 +778,146 @@ button.month-block:hover,
     flex: 1 1 100%;
   }
 }
+
+
+/* Patient fiscal section */
+.section-divider {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  margin-top: 4px;
+  padding-top: 14px;
+  border-top: 1px solid var(--border, #e5e7eb);
+}
+.section-divider strong {
+  font-size: 14px;
+}
+.section-divider small {
+  color: var(--muted, #6b7280);
+  font-size: 12px;
+}
+button:disabled,
+input:disabled,
+select:disabled,
+textarea:disabled {
+  opacity: .62;
+  cursor: not-allowed;
+}
+
+
+/* Login persistente + biometria */
+.remember-login {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  margin: -2px 0 2px;
+  color: #555e59;
+  font-size: 12px;
+}
+.remember-login input {
+  width: auto;
+  accent-color: var(--brand-primary);
+}
+.biometric-login-button {
+  width: 100%;
+  min-height: 44px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  border: 1px solid #d9ddd9;
+  border-radius: 12px;
+  background: #f7f8f6;
+  color: #313733;
+  font-weight: 700;
+}
+.biometric-login-button:disabled {
+  opacity: .55;
+  cursor: not-allowed;
+}
+
+.security-panel {
+  margin-top: 12px;
+  display: grid;
+  gap: 14px;
+}
+.security-head {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+}
+.security-head h2 {
+  margin: 0 0 4px;
+}
+.security-head p {
+  margin: 0;
+  color: var(--muted, #6b7280);
+  font-size: 12px;
+  line-height: 1.5;
+}
+.passkey-list {
+  display: grid;
+  gap: 8px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border, #e5e7eb);
+}
+.passkey-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 9px 10px;
+  border: 1px solid var(--border, #e5e7eb);
+  border-radius: 11px;
+  background: #fafafa;
+}
+.passkey-item div {
+  min-width: 0;
+  display: grid;
+  gap: 2px;
+}
+.passkey-item span {
+  font-size: 12px;
+  font-weight: 700;
+}
+.passkey-item small {
+  color: var(--muted, #6b7280);
+  font-size: 10px;
+}
+
+/* Retorno rápido com data real */
+.return-row button {
+  min-width: 68px;
+  display: grid;
+  gap: 1px;
+  text-align: center;
+}
+.return-row button strong {
+  font-size: 11px;
+}
+.return-row button small {
+  font-size: 8px;
+  opacity: .72;
+}
+.return-row button.return-primary {
+  border-color: var(--brand-primary);
+  box-shadow: inset 0 0 0 1px var(--brand-primary);
+}
+
+@media (max-width: 560px) {
+  .security-head {
+    gap: 9px;
+  }
+  .passkey-item {
+    padding: 8px;
+  }
+  .return-row {
+    align-items: stretch;
+  }
+  .return-row > span {
+    flex-basis: 100%;
+  }
+  .return-row button {
+    flex: 1 1 68px;
+  }
+}
