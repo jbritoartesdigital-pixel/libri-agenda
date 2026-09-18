@@ -1337,6 +1337,52 @@ export default {
             FROM appointments a JOIN patients p ON p.id = a.patient_id WHERE a.id = ?
           `).bind(appointmentId).first())
         }
+
+        if (request.method === 'DELETE') {
+          const invoice = await env.DB.prepare(`
+            SELECT file_url
+            FROM invoices
+            WHERE appointment_id = ?
+            LIMIT 1
+          `).bind(appointmentId).first()
+
+          if (invoice?.file_url) {
+            if (!env.FILES) {
+              return error('Este agendamento possui um PDF de nota fiscal e o armazenamento de arquivos não está disponível no momento.', 503)
+            }
+            try {
+              await env.FILES.delete(invoice.file_url)
+            } catch {
+              return error('Não foi possível remover o PDF vinculado. Tente novamente antes de excluir o agendamento.', 502)
+            }
+          }
+
+          // Limpeza explícita para funcionar corretamente mesmo que
+          // o ambiente não esteja aplicando cascatas de chave estrangeira.
+          await env.DB.prepare(`
+            UPDATE appointments
+            SET original_appointment_id = NULL
+            WHERE original_appointment_id = ?
+          `).bind(appointmentId).run()
+
+          await env.DB.prepare('DELETE FROM invoices WHERE appointment_id = ?')
+            .bind(appointmentId).run()
+
+          await env.DB.prepare('DELETE FROM appointments WHERE id = ?')
+            .bind(appointmentId).run()
+
+          await audit(
+            env,
+            session,
+            current.professional_id,
+            'appointment',
+            appointmentId,
+            'delete',
+            `Agendamento de ${current.patient_name} em ${current.appointment_date} ${current.start_time} excluído`,
+          )
+
+          return json({ ok: true })
+        }
       }
 
       const invoiceMatch = url.pathname.match(/^\/api\/appointments\/(\d+)\/invoice$/)
