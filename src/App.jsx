@@ -50,6 +50,23 @@ function sortAppointments(items) {
   return [...items].sort((a, b) => `${a.appointment_date} ${a.start_time}`.localeCompare(`${b.appointment_date} ${b.start_time}`))
 }
 
+function blockAppliesToDate(block, date) {
+  const exceptions = Array.isArray(block.exceptions) ? block.exceptions : []
+  if (exceptions.includes(date)) return false
+
+  if (Number(block.recurring) === 1) {
+    const startsOnOrAfterAnchor = !block.block_date || date >= block.block_date
+    return startsOnOrAfterAnchor && Number(block.recurrence_weekday) === parseISODate(date).getDay()
+  }
+
+  const endDate = block.end_date || block.block_date
+  return date >= block.block_date && date <= endDate
+}
+
+function blockIsPeriod(block) {
+  return Number(block.recurring) !== 1 && Boolean(block.end_date) && block.end_date !== block.block_date
+}
+
 export default function App() {
   const [session, setSession] = useState(null)
   const [setupRequired, setSetupRequired] = useState(false)
@@ -296,14 +313,35 @@ export default function App() {
 
   async function saveBlock(data) {
     try {
-      await api.post(`/api/professionals/${professionalId}/blocks`, data)
-      setBlockModal(null); await loadWorkspace(professionalId); notify('Bloqueio criado.')
+      if (blockModal?.block?.id) {
+        await api.patch(`/api/blocks/${blockModal.block.id}`, data)
+        notify('Bloqueio atualizado.')
+      } else {
+        await api.post(`/api/professionals/${professionalId}/blocks`, data)
+        notify('Bloqueio criado.')
+      }
+      setBlockModal(null)
+      await loadWorkspace(professionalId)
     } catch (e) { setError(e.message) }
   }
 
   async function deleteBlock(id) {
     if (!window.confirm('Remover este bloqueio?')) return
-    try { await api.delete(`/api/blocks/${id}`); await loadWorkspace(professionalId); notify('Bloqueio removido.') } catch (e) { setError(e.message) }
+    try {
+      await api.delete(`/api/blocks/${id}`)
+      setBlockModal(null)
+      await loadWorkspace(professionalId)
+      notify('Bloqueio removido.')
+    } catch (e) { setError(e.message) }
+  }
+
+  async function excludeBlockDate(id, date) {
+    try {
+      await api.post(`/api/blocks/${id}/exceptions`, { date })
+      setBlockModal(null)
+      await loadWorkspace(professionalId)
+      notify(`Dia ${formatDate(date)} liberado.`)
+    } catch (e) { setError(e.message) }
   }
 
   async function saveRules(nextRules) {
@@ -412,11 +450,11 @@ export default function App() {
           <ProfessionalsScreen professionals={professionals} onOpen={(id) => { setProfessionalId(id); setActiveNav('Início') }} onEdit={setProfessionalModal} onAdd={() => setProfessionalModal({})} />
         )}
         {professional && activeNav === 'Início' && <HomeScreen professional={professional} todayAppointments={todayAppointments} pendingConfirmations={pendingConfirmations} pendingPayments={pendingPayments} pendingInvoices={pendingInvoices} onOpenAppointment={setAppointmentModal} onAgenda={() => setActiveNav('Agenda')} onFind={() => setAvailability({ mode: 'pick', initial: { from: todayISO(), type: 'first', modality: 'online' }, context: { kind: 'new', draft: { appointment_type: 'first', modality: 'online' } } })} />}
-        {professional && activeNav === 'Agenda' && <AgendaScreen date={calendarDate} setDate={setCalendarDate} view={calendarView} setView={setCalendarView} appointments={appointments} blocks={blocks} onAppointment={setAppointmentModal} onNew={(date) => setAppointmentModal({ initial: { appointment_date: date } })} onBlock={(date) => setBlockModal({ date })} />}
+        {professional && activeNav === 'Agenda' && <AgendaScreen date={calendarDate} setDate={setCalendarDate} view={calendarView} setView={setCalendarView} appointments={appointments} blocks={blocks} onAppointment={setAppointmentModal} onNew={(date) => setAppointmentModal({ initial: { appointment_date: date } })} onBlock={(date, block = null) => setBlockModal({ date, block })} />}
         {professional && activeNav === 'Pacientes' && <PatientsScreen patients={patients} search={search} setSearch={setSearch} appointments={appointments} onOpen={openPatient} onNew={() => openPatient()} onWhatsApp={whatsappPatient} onTimes={sendAvailableTimes} onSchedule={(patient) => setAppointmentModal({ initial: { patient_id: patient.id, appointment_date: todayISO(), modality: patient.preferred_modality || 'online' } })} />}
         {professional && activeNav === 'Pendências' && <PendingScreen confirmations={pendingConfirmations} payments={pendingPayments} invoices={pendingInvoices} onOpen={setAppointmentModal} onWhatsApp={whatsappAppointment} onInvoice={setInvoiceModal} />}
         {professional && activeNav === 'Mensagens' && <MessagesScreen messages={messages} professional={professional} onSave={saveMessage} />}
-        {professional && activeNav === 'Configurações' && <SettingsScreen professional={professional} rules={rules} blocks={blocks} audit={audit} onEdit={() => setProfessionalModal(professional)} onSaveRules={saveRules} onBlock={() => setBlockModal({ date: todayISO() })} onDeleteBlock={deleteBlock} />}
+        {professional && activeNav === 'Configurações' && <SettingsScreen professional={professional} rules={rules} blocks={blocks} audit={audit} onEdit={() => setProfessionalModal(professional)} onSaveRules={saveRules} onBlock={() => setBlockModal({ date: todayISO(), block: null })} onEditBlock={(block) => setBlockModal({ date: block.block_date, block })} onDeleteBlock={deleteBlock} />}
 
         {!professional && activeNav !== 'Profissionais' && <div className="empty-state big">Cadastre um profissional para começar.</div>}
       </main>
@@ -437,7 +475,7 @@ export default function App() {
       />}
       {patientModal && <PatientModal patient={patientModal.id ? patientModal : null} fiscal={patientFiscal} onClose={() => setPatientModal(null)} onSave={savePatient} onSaveFiscal={saveFiscal} onArchive={archivePatient} />}
       {professionalModal && <ProfessionalModal professional={professionalModal.id ? professionalModal : null} onClose={() => setProfessionalModal(null)} onSave={saveProfessional} />}
-      {blockModal && <BlockModal initialDate={blockModal.date} onClose={() => setBlockModal(null)} onSave={saveBlock} />}
+      {blockModal && <BlockModal initialDate={blockModal.date} block={blockModal.block} onClose={() => setBlockModal(null)} onSave={saveBlock} onRemove={deleteBlock} onExcludeDate={excludeBlockDate} />}
       {availability && <AvailabilityModal professionalId={professionalId} api={api} initial={availability.initial} mode={availability.mode} maxSelect={3} onClose={() => setAvailability(null)} onPick={pickSlot} onUseSelected={useSelectedSlots} />}
       {invoiceModal && <InvoiceModal appointment={invoiceModal} onClose={() => setInvoiceModal(null)} onDone={async () => { await loadWorkspace(professionalId); setInvoiceModal(null); notify('Nota fiscal atualizada.') }} />}
       {toast && <div className="toast">{toast}</div>}
@@ -512,30 +550,34 @@ function HomeScreen({ professional, todayAppointments, pendingConfirmations, pen
 function AgendaScreen({ date, setDate, view, setView, appointments, blocks, onAppointment, onNew, onBlock }) {
   const ranges = view === 'day' ? [date, date] : view === 'week' ? [startOfWeek(date), endOfWeek(date)] : [startOfMonth(date), endOfMonth(date)]
   const visibleAppointments = appointments.filter((a) => a.appointment_date >= ranges[0] && a.appointment_date <= ranges[1])
-  const visibleBlocks = blocks.filter((b) => Number(b.recurring) === 1 || (b.block_date >= ranges[0] && b.block_date <= ranges[1]))
+  const visibleBlocks = blocks.filter((b) => {
+    if (Number(b.recurring) === 1) return true
+    const endDate = b.end_date || b.block_date
+    return b.block_date <= ranges[1] && endDate >= ranges[0]
+  })
   function move(dir) { setDate(view === 'day' ? addDays(date, dir) : view === 'week' ? addDays(date, dir * 7) : addDays(startOfMonth(date), dir > 0 ? 35 : -7)) }
   return <>
     <section className="page-head compact"><div><span className="eyebrow">Agenda</span><h1>{view === 'day' ? formatLongDate(date) : view === 'week' ? `${formatDate(ranges[0])} a ${formatDate(ranges[1])}` : new Intl.DateTimeFormat('pt-BR', { month: 'long', year: 'numeric' }).format(parseISODate(date))}</h1></div><div className="toolbar"><button className="icon-button" onClick={() => move(-1)}><ChevronLeft size={18} /></button><button className="ghost-button" onClick={() => setDate(todayISO())}>Hoje</button><button className="icon-button" onClick={() => move(1)}><ChevronRight size={18} /></button><div className="segmented">{[['day','Dia'],['week','Semana'],['month','Mês']].map(([k,l]) => <button key={k} className={view===k?'active':''} onClick={() => setView(k)}>{l}</button>)}</div><button className="ghost-button" onClick={() => onBlock(date)}><Ban size={16}/> Bloquear</button><button className="primary-button" onClick={() => onNew(date)}><Plus size={17}/> Consulta</button></div></section>
-    {view === 'day' && <DayView date={date} appointments={visibleAppointments} blocks={visibleBlocks} onAppointment={onAppointment} onNew={onNew} />}
-    {view === 'week' && <WeekView date={date} appointments={visibleAppointments} blocks={visibleBlocks} onAppointment={onAppointment} onNew={onNew} />}
-    {view === 'month' && <MonthView date={date} appointments={visibleAppointments} blocks={visibleBlocks} onAppointment={onAppointment} onNew={onNew} />}
+    {view === 'day' && <DayView date={date} appointments={visibleAppointments} blocks={visibleBlocks} onAppointment={onAppointment} onNew={onNew} onBlock={onBlock} />}
+    {view === 'week' && <WeekView date={date} appointments={visibleAppointments} blocks={visibleBlocks} onAppointment={onAppointment} onNew={onNew} onBlock={onBlock} />}
+    {view === 'month' && <MonthView date={date} appointments={visibleAppointments} blocks={visibleBlocks} onAppointment={onAppointment} onNew={onNew} onBlock={onBlock} />}
   </>
 }
 
-function DayView({ date, appointments, blocks, onAppointment, onNew }) {
-  const dayBlocks = blocks.filter((b) => (Number(b.recurring) === 1 && Number(b.recurrence_weekday) === parseISODate(date).getDay()) || b.block_date === date)
-  return <div className="panel"><div className="calendar-day-head"><strong>{formatLongDate(date)}</strong><button className="text-button" onClick={() => onNew(date)}><Plus size={16}/> Adicionar</button></div>{dayBlocks.map((b) => <BlockRow key={`b-${b.id}`} block={b} />)}<div className="appointment-list">{sortAppointments(appointments).map((a) => <AppointmentRow key={a.id} item={a} onOpen={() => onAppointment(a)} />)}{!appointments.length && !dayBlocks.length && <div className="empty-state">Dia livre.</div>}</div></div>
+function DayView({ date, appointments, blocks, onAppointment, onNew, onBlock }) {
+  const dayBlocks = blocks.filter((b) => blockAppliesToDate(b, date))
+  return <div className="panel"><div className="calendar-day-head"><strong>{formatLongDate(date)}</strong><button className="text-button" onClick={() => dayBlocks.length ? onBlock(date, dayBlocks[0]) : onNew(date)}>{dayBlocks.length ? <><Ban size={16}/> Ver bloqueio</> : <><Plus size={16}/> Adicionar</>}</button></div>{dayBlocks.map((b) => <BlockRow key={`b-${b.id}`} block={b} onOpen={() => onBlock(date, b)} />)}<div className="appointment-list">{sortAppointments(appointments).map((a) => <AppointmentRow key={a.id} item={a} onOpen={() => onAppointment(a)} />)}{!appointments.length && !dayBlocks.length && <div className="empty-state">Dia livre.</div>}</div></div>
 }
 
-function WeekView({ date, appointments, blocks, onAppointment, onNew }) {
+function WeekView({ date, appointments, blocks, onAppointment, onNew, onBlock }) {
   const start = startOfWeek(date)
   const days = Array.from({ length: 7 }, (_, i) => addDays(start, i))
-  return <div className="week-grid">{days.map((day) => { const weekday = parseISODate(day).getDay(); const dayBlocks = blocks.filter((b) => b.block_date === day || (Number(b.recurring) === 1 && Number(b.recurrence_weekday) === weekday)); const dayAppts = sortAppointments(appointments.filter((a) => a.appointment_date === day)); return <div className={`week-column ${day===todayISO()?'today':''}`} key={day}><button className="week-head" onClick={() => onNew(day)}><span>{weekdayShort(day)}</span><strong>{parseISODate(day).getDate()}</strong></button>{dayBlocks.map((b)=><div className="mini-block" key={`b-${b.id}`}><Ban size={13}/>{b.title}</div>)}{dayAppts.map((a)=><button key={a.id} className={`mini-appointment ${a.status}`} onClick={()=>onAppointment(a)}><strong>{a.start_time}</strong><span>{a.patient_name}</span><small>{a.modality==='online'?'Online':'Presencial'}</small></button>)}{!dayBlocks.length&&!dayAppts.length&&<div className="week-empty">Livre</div>}</div>})}</div>
+  return <div className="week-grid">{days.map((day) => { const dayBlocks = blocks.filter((b) => blockAppliesToDate(b, day)); const dayAppts = sortAppointments(appointments.filter((a) => a.appointment_date === day)); return <div className={`week-column ${day===todayISO()?'today':''}`} key={day}><button className="week-head" onClick={() => dayBlocks.length ? onBlock(day, dayBlocks[0]) : onNew(day)}><span>{weekdayShort(day)}</span><strong>{parseISODate(day).getDate()}</strong></button>{dayBlocks.map((b)=><button type="button" className="mini-block" key={`b-${b.id}`} onClick={()=>onBlock(day,b)}><Ban size={13}/>{b.title}</button>)}{dayAppts.map((a)=><button key={a.id} className={`mini-appointment ${a.status}`} onClick={()=>onAppointment(a)}><strong>{a.start_time}</strong><span>{a.patient_name}</span><small>{a.modality==='online'?'Online':'Presencial'}</small></button>)}{!dayBlocks.length&&!dayAppts.length&&<div className="week-empty">Livre</div>}</div>})}</div>
 }
 
-function MonthView({ date, appointments, blocks, onAppointment, onNew }) {
+function MonthView({ date, appointments, blocks, onAppointment, onNew, onBlock }) {
   const days = monthGrid(date); const currentMonth = parseISODate(date).getMonth()
-  return <div className="month-grid">{['Seg','Ter','Qua','Qui','Sex','Sáb','Dom'].map((d)=><div className="month-weekday" key={d}>{d}</div>)}{days.map((day)=>{const dayAppts=appointments.filter((a)=>a.appointment_date===day);const weekday=parseISODate(day).getDay();const dayBlocks=blocks.filter((b)=>b.block_date===day||(Number(b.recurring)===1&&Number(b.recurrence_weekday)===weekday));return <div className={`month-cell ${parseISODate(day).getMonth()!==currentMonth?'muted-cell':''} ${day===todayISO()?'today':''}`} key={day}><button className="month-date" onClick={()=>onNew(day)}>{parseISODate(day).getDate()}</button>{dayBlocks.slice(0,1).map((b)=><div className="month-block" key={`b-${b.id}`}>{b.title}</div>)}{dayAppts.slice(0,3).map((a)=><button className="month-appt" key={a.id} onClick={()=>onAppointment(a)}>{a.start_time} {a.patient_name}</button>)}{dayAppts.length>3&&<small>+{dayAppts.length-3} consultas</small>}</div>})}</div>
+  return <div className="month-grid">{['Seg','Ter','Qua','Qui','Sex','Sáb','Dom'].map((d)=><div className="month-weekday" key={d}>{d}</div>)}{days.map((day)=>{const dayAppts=appointments.filter((a)=>a.appointment_date===day);const dayBlocks=blocks.filter((b)=>blockAppliesToDate(b,day));return <div className={`month-cell ${parseISODate(day).getMonth()!==currentMonth?'muted-cell':''} ${day===todayISO()?'today':''}`} key={day}><button className="month-date" onClick={()=>dayBlocks.length ? onBlock(day,dayBlocks[0]) : onNew(day)}>{parseISODate(day).getDate()}</button>{dayBlocks.slice(0,2).map((b)=><button type="button" className="month-block" key={`b-${b.id}`} onClick={()=>onBlock(day,b)}>{b.title}</button>)}{dayBlocks.length>2&&<small>+{dayBlocks.length-2} bloqueios</small>}{dayAppts.slice(0,3).map((a)=><button className="month-appt" key={a.id} onClick={()=>onAppointment(a)}>{a.start_time} {a.patient_name}</button>)}{dayAppts.length>3&&<small>+{dayAppts.length-3} consultas</small>}</div>})}</div>
 }
 
 function PatientsScreen({ patients, search, setSearch, appointments, onOpen, onNew, onWhatsApp, onTimes, onSchedule }) {
@@ -558,12 +600,12 @@ function MessageEditor({ item, onClose, onSave }) {
   return <Modal title="Editar mensagem" subtitle="O texto fica salvo apenas para este profissional." onClose={onClose} wide><form className="form-grid" onSubmit={(e)=>{e.preventDefault();onSave(form)}}><label className="field"><span>Título</span><input value={form.title} onChange={(e)=>setForm({...form,title:e.target.value})}/></label><label className="field"><span>Chave</span><input value={form.template_key} disabled/></label><label className="field span-2"><span>Mensagem</span><textarea rows="12" value={form.content||''} onChange={(e)=>setForm({...form,content:e.target.value})}/></label><div className="modal-actions span-2"><button type="button" className="ghost-button" onClick={onClose}>Cancelar</button><button className="primary-button">Salvar mensagem</button></div></form></Modal>
 }
 
-function SettingsScreen({ professional, rules, blocks, audit, onEdit, onSaveRules, onBlock, onDeleteBlock }) {
+function SettingsScreen({ professional, rules, blocks, audit, onEdit, onSaveRules, onBlock, onEditBlock, onDeleteBlock }) {
   const [tab,setTab]=useState('agenda')
   const initialWeekly = useMemo(()=>weekdays.map(([weekday,label])=>{const rule=rules.find((r)=>Number(r.weekday)===weekday);return {weekday,label,enabled:Boolean(rule),start_time:rule?.start_time||'09:00',end_time:rule?.end_time||'18:00',modality:rule?.modality||'both'}}),[rules])
   const [weekly,setWeekly]=useState(initialWeekly)
   useEffect(()=>setWeekly(initialWeekly),[initialWeekly])
-  return <><section className="page-head compact"><div><span className="eyebrow">Configurações</span><h1>{professional.name}</h1><p>Rotina, identidade, bloqueios e histórico.</p></div><button className="primary-button" onClick={onEdit}><Palette size={17}/> Identidade e valores</button></section><div className="tabs"><button className={tab==='agenda'?'active':''} onClick={()=>setTab('agenda')}>Agenda</button><button className={tab==='bloqueios'?'active':''} onClick={()=>setTab('bloqueios')}>Bloqueios</button><button className={tab==='historico'?'active':''} onClick={()=>setTab('historico')}>Histórico</button><button className={tab==='acesso'?'active':''} onClick={()=>setTab('acesso')}>Acesso</button></div>{tab==='agenda'&&<div className="panel"><div className="panel-head"><div><h2>Rotina semanal</h2><p className="muted">Use apenas os períodos em que consultas particulares podem ser marcadas.</p></div></div><div className="weekly-settings">{weekly.map((row,i)=><div className="weekly-row" key={row.weekday}><label className="check-field"><input type="checkbox" checked={row.enabled} onChange={(e)=>{const n=[...weekly];n[i]={...row,enabled:e.target.checked};setWeekly(n)}}/><strong>{row.label}</strong></label><input type="time" value={row.start_time} disabled={!row.enabled} onChange={(e)=>{const n=[...weekly];n[i]={...row,start_time:e.target.value};setWeekly(n)}}/><span>até</span><input type="time" value={row.end_time} disabled={!row.enabled} onChange={(e)=>{const n=[...weekly];n[i]={...row,end_time:e.target.value};setWeekly(n)}}/><select value={row.modality} disabled={!row.enabled} onChange={(e)=>{const n=[...weekly];n[i]={...row,modality:e.target.value};setWeekly(n)}}><option value="both">Online + presencial</option><option value="online">Somente online</option><option value="in_person">Somente presencial</option></select></div>)}</div><div className="panel-actions"><button className="primary-button" onClick={()=>onSaveRules(weekly.filter((r)=>r.enabled).map(({weekday,start_time,end_time,modality})=>({weekday,start_time,end_time,modality})))}>Salvar rotina</button></div></div>}{tab==='bloqueios'&&<div className="panel"><div className="panel-head"><div><h2>Bloqueios</h2><p className="muted">Ambulatório, pós, folga e compromissos.</p></div><button className="primary-button" onClick={onBlock}><Plus size={16}/> Novo bloqueio</button></div><div className="block-list">{blocks.map((b)=><div className="block-item" key={b.id}><Ban size={17}/><div><strong>{b.title}</strong><small>{Number(b.recurring)===1?`Recorrente · ${weekdays.find(([d])=>d===Number(b.recurrence_weekday))?.[1]||''}`:`${formatDate(b.block_date)}${Number(b.all_day)===1?' · dia inteiro':` · ${b.start_time}–${b.end_time}`}`}</small></div><button className="danger-soft" onClick={()=>onDeleteBlock(b.id)}>Remover</button></div>)}{!blocks.length&&<div className="empty-state">Nenhum bloqueio cadastrado.</div>}</div></div>}{tab==='historico'&&<div className="panel"><div className="panel-head"><div><h2>Histórico de alterações</h2></div></div><div className="audit-list">{audit.map((a)=><div className="audit-item" key={a.id}><History size={16}/><div><strong>{a.description||a.action}</strong><small>{a.user_name||'Sistema'} · {new Date(a.created_at+'Z').toLocaleString('pt-BR')}</small></div></div>)}{!audit.length&&<div className="empty-state">Ainda não há alterações registradas.</div>}</div></div>}{tab==='acesso'&&<div className="panel access-panel"><LockKeyhole size={28}/><div><h2>Acesso da profissional</h2><p>{professional.access_slug ? <>Link direto: <code>{window.location.origin}/{professional.access_slug}</code>. A senha pode ser alterada em <strong>Identidade e valores</strong>.</> : <>Ainda não há login próprio configurado. Abra <strong>Identidade e valores</strong>, escolha o link e defina uma senha.</>}</p></div></div>}</>
+  return <><section className="page-head compact"><div><span className="eyebrow">Configurações</span><h1>{professional.name}</h1><p>Rotina, identidade, bloqueios e histórico.</p></div><button className="primary-button" onClick={onEdit}><Palette size={17}/> Identidade e valores</button></section><div className="tabs"><button className={tab==='agenda'?'active':''} onClick={()=>setTab('agenda')}>Agenda</button><button className={tab==='bloqueios'?'active':''} onClick={()=>setTab('bloqueios')}>Bloqueios</button><button className={tab==='historico'?'active':''} onClick={()=>setTab('historico')}>Histórico</button><button className={tab==='acesso'?'active':''} onClick={()=>setTab('acesso')}>Acesso</button></div>{tab==='agenda'&&<div className="panel"><div className="panel-head"><div><h2>Rotina semanal</h2><p className="muted">Use apenas os períodos em que consultas particulares podem ser marcadas.</p></div></div><div className="weekly-settings">{weekly.map((row,i)=><div className="weekly-row" key={row.weekday}><label className="check-field"><input type="checkbox" checked={row.enabled} onChange={(e)=>{const n=[...weekly];n[i]={...row,enabled:e.target.checked};setWeekly(n)}}/><strong>{row.label}</strong></label><input type="time" value={row.start_time} disabled={!row.enabled} onChange={(e)=>{const n=[...weekly];n[i]={...row,start_time:e.target.value};setWeekly(n)}}/><span>até</span><input type="time" value={row.end_time} disabled={!row.enabled} onChange={(e)=>{const n=[...weekly];n[i]={...row,end_time:e.target.value};setWeekly(n)}}/><select value={row.modality} disabled={!row.enabled} onChange={(e)=>{const n=[...weekly];n[i]={...row,modality:e.target.value};setWeekly(n)}}><option value="both">Online + presencial</option><option value="online">Somente online</option><option value="in_person">Somente presencial</option></select></div>)}</div><div className="panel-actions"><button className="primary-button" onClick={()=>onSaveRules(weekly.filter((r)=>r.enabled).map(({weekday,start_time,end_time,modality})=>({weekday,start_time,end_time,modality})))}>Salvar rotina</button></div></div>}{tab==='bloqueios'&&<div className="panel"><div className="panel-head"><div><h2>Bloqueios</h2><p className="muted">Ambulatório, pós, folga, férias e compromissos.</p></div><button className="primary-button" onClick={onBlock}><Plus size={16}/> Novo bloqueio</button></div><div className="block-list">{blocks.map((b)=><div className="block-item" key={b.id}><Ban size={17}/><div><strong>{b.title}</strong><small>{Number(b.recurring)===1?`Recorrente · ${weekdays.find(([d])=>d===Number(b.recurrence_weekday))?.[1]||''}`:blockIsPeriod(b)?`${formatDate(b.block_date)} a ${formatDate(b.end_date)}${Number(b.all_day)===1?' · dia inteiro':` · ${b.start_time}–${b.end_time}`}`:`${formatDate(b.block_date)}${Number(b.all_day)===1?' · dia inteiro':` · ${b.start_time}–${b.end_time}`}`}</small></div><button className="ghost-button compact-action" onClick={()=>onEditBlock(b)}>Abrir</button></div>)}{!blocks.length&&<div className="empty-state">Nenhum bloqueio cadastrado.</div>}</div></div>}{tab==='historico'&&<div className="panel"><div className="panel-head"><div><h2>Histórico de alterações</h2></div></div><div className="audit-list">{audit.map((a)=><div className="audit-item" key={a.id}><History size={16}/><div><strong>{a.description||a.action}</strong><small>{a.user_name||'Sistema'} · {new Date(a.created_at+'Z').toLocaleString('pt-BR')}</small></div></div>)}{!audit.length&&<div className="empty-state">Ainda não há alterações registradas.</div>}</div></div>}{tab==='acesso'&&<div className="panel access-panel"><LockKeyhole size={28}/><div><h2>Acesso da profissional</h2><p>{professional.access_slug ? <>Link direto: <code>{window.location.origin}/{professional.access_slug}</code>. A senha pode ser alterada em <strong>Identidade e valores</strong>.</> : <>Ainda não há login próprio configurado. Abra <strong>Identidade e valores</strong>, escolha o link e defina uma senha.</>}</p></div></div>}</>
 }
 
 function InvoiceModal({ appointment, onClose, onDone }) {
@@ -650,7 +692,7 @@ function InvoiceModal({ appointment, onClose, onDone }) {
 }
 
 function AppointmentRow({ item, onOpen }) { return <button className="appointment-row" onClick={onOpen}><div className="time-cell"><strong>{item.start_time}</strong><small>{item.end_time}</small></div><div className="appointment-main"><strong>{item.patient_name}</strong><span>{item.appointment_type==='first'?'Primeira consulta':'Retorno'} · {item.modality==='online'?'Online':'Presencial'}</span></div><StatusBadge value={item.status}/><div className="money-cell"><strong>{formatBRL(item.price)}</strong><StatusBadge value={item.payment_status} kind="payment"/></div></button> }
-function BlockRow({ block }) { return <div className="block-row"><Ban size={16}/><strong>{block.title}</strong><span>{Number(block.all_day)===1?'Dia inteiro':`${block.start_time}–${block.end_time}`}</span></div> }
+function BlockRow({ block, onOpen }) { return <button type="button" className="block-row block-row-button" onClick={onOpen}><Ban size={16}/><strong>{block.title}</strong><span>{Number(block.all_day)===1?'Dia inteiro':`${block.start_time}–${block.end_time}`}</span></button> }
 function Stat({ icon:Icon,label,value }) { return <div className="stat-card"><div className="stat-icon"><Icon size={18}/></div><strong>{value}</strong><span>{label}</span></div> }
 function PendingGroup({ title, icon:Icon, items, empty, render }) { return <section className="panel"><div className="panel-head"><div className="group-title"><Icon size={18}/><h2>{title}</h2></div><span className="count-pill">{items.length}</span></div>{items.length?items.map(render):<div className="empty-state">{empty}</div>}</section> }
 function PendingItem({ item, onOpen, action }) { return <div className="pending-item"><button onClick={onOpen}><strong>{item.patient_name}</strong><span>{formatDate(item.appointment_date)} · {item.start_time}</span></button>{action}</div> }
