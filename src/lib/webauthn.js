@@ -87,6 +87,9 @@ export async function loginWithPasskey(slug, remember = true) {
       timeout: options.timeout || 60000,
       userVerification: 'required',
     },
+    // Em uma tela de login é apropriado permitir que o navegador
+    // solicite a passkey sem exigir um clique prévio.
+    mediation: 'optional',
   })
 
   if (!credential) throw new Error('A autenticação biométrica não foi concluída.')
